@@ -17,7 +17,11 @@ class LiveTradingBlocked(Exception):
 
 
 class BinanceSpotClient:
-    TESTNET_REST_BASE = "https://testnet.binance.vision/api"
+    """
+    Bybit Spot client — იგივე interface, Bybit backend.
+    კლასის სახელი შენარჩუნებულია (BinanceSpotClient) რათა
+    დანარჩენი კოდი (execution_engine.py და სხვა) ცვლილების გარეშე იმუშაოს.
+    """
 
     def __init__(self):
         self.mode = os.getenv("MODE", "DEMO").upper()  # DEMO | TESTNET | LIVE
@@ -31,70 +35,40 @@ class BinanceSpotClient:
             if s.strip()
         )
 
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # ORDER_RETRY — transient Binance errors-ზე exponential backoff
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         self.order_retry_count    = int(os.getenv("ORDER_RETRY_COUNT",    "3"))
         self.order_retry_delay_ms = int(os.getenv("ORDER_RETRY_DELAY_MS", "400"))
 
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # SPREAD_LIMIT_PERCENT — MAX_SPREAD_PCT alias (fallback chain)
-        # execution_engine-ი MAX_SPREAD_PCT-ს კითხულობს, exchange_client
-        # SPREAD_LIMIT_PERCENT-ს — ორივე ერთ ადგილობრივ slot-ს იზიარებს
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         self.spread_limit_pct = float(
             os.getenv("SPREAD_LIMIT_PERCENT") or os.getenv("MAX_SPREAD_PCT") or "0.12"
         )
 
-        api_key    = os.getenv("BINANCE_API_KEY",    "").strip()
-        api_secret = os.getenv("BINANCE_API_SECRET", "").strip()
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # BYBIT API KEYS (Render ENV-დან)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        api_key    = os.getenv("BYBIT_API_KEY",    "").strip()
+        api_secret = os.getenv("BYBIT_API_SECRET", "").strip()
 
         if self.mode in ("LIVE", "TESTNET"):
             if not api_key or not api_secret:
-                raise ExchangeClientError("Missing BINANCE_API_KEY / BINANCE_API_SECRET for LIVE/TESTNET.")
+                raise ExchangeClientError("Missing BYBIT_API_KEY / BYBIT_API_SECRET for LIVE/TESTNET.")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # BINANCE_LIVE_REST_BASE — custom REST endpoint (regional / proxy)
-        # default: Binance global. Override: https://api.binance.com/api/v3
+        # ccxt.bybit — Spot რეჟიმი
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        live_rest_base = os.getenv("BINANCE_LIVE_REST_BASE", "").strip()
-
-        self.exchange = ccxt.binance({
+        exchange_config = {
             "apiKey":          api_key,
             "secret":          api_secret,
             "enableRateLimit": True,
-            "options":         {"defaultType": "spot"},
-        })
+            "options": {
+                "defaultType": "spot",  # Spot trading
+            },
+        }
 
         if self.mode == "TESTNET":
-            self.exchange.urls["api"] = {
-                "public":  self.TESTNET_REST_BASE,
-                "private": self.TESTNET_REST_BASE,
-            }
-            self.exchange.options["fetchCurrencies"] = False
-        elif self.mode == "LIVE" and live_rest_base:
-            # FIX: ყველა endpoint-ი ერთად შეიცვლება —
-            # api.binance.com → api.binance.me (ან სხვა regional endpoint)
-            # "api"  = REST v1/v3 (public + private orders)
-            # "sapi" = Wallet/Capital API (fetch_currencies, load_markets)
-            # "fapi" = Futures (არ გვჭირდება, მაგრამ ვცვლით სიმეტრიისთვის)
-            base = live_rest_base.rstrip("/")
-            # base from ENV: https://api.binance.me/api/v3
-            # extract host: https://api.binance.me
-            import re
-            host_match = re.match(r"(https?://[^/]+)", base)
-            host = host_match.group(1) if host_match else base
+            exchange_config["options"]["testnet"] = True
+            logger.info("BYBIT_TESTNET | testnet mode enabled")
 
-            self.exchange.urls["api"]["public"]  = f"{host}/api/v3"
-            self.exchange.urls["api"]["private"] = f"{host}/api/v3"
-            # სავალუტო/capital endpoint — ეს იყო ბლოკის მიზეზი
-            if "sapi" in self.exchange.urls.get("api", {}):
-                self.exchange.urls["api"]["sapi"] = f"{host}/sapi/v1"
-            # fetchCurrencies გათიშვა — sapi/v1/capital/config/getall
-            # Render-ის IP-ს ეს endpoint ბლოკია Binance-ზე
-            # load_markets-ისთვის საკმარისია public endpoint-ი
-            self.exchange.options["fetchCurrencies"] = False
-            logger.info(f"BINANCE_REST_OVERRIDE | host={host} fetchCurrencies=disabled")
+        self.exchange = ccxt.bybit(exchange_config)
 
         # warm up markets for precision helpers
         try:
@@ -118,7 +92,6 @@ class BinanceSpotClient:
         """
         ORDER_RETRY_COUNT / ORDER_RETRY_DELAY_MS — exponential backoff.
         NetworkError / RequestTimeout → retry. სხვა exception → immediately raise.
-        Delays: 0.4s → 0.8s → 1.6s (ORDER_RETRY_COUNT=3, DELAY_MS=400)
         """
         delay_s  = self.order_retry_delay_ms / 1000.0
         last_err = None
@@ -135,7 +108,7 @@ class BinanceSpotClient:
                     )
                     time.sleep(wait)
             except Exception:
-                raise  # non-transient — surface immediately
+                raise
         raise ExchangeClientError(
             f"{label}_RETRY_EXHAUSTED after {self.order_retry_count} attempts | last_err={last_err}"
         )
@@ -162,32 +135,30 @@ class BinanceSpotClient:
         return float(t["last"])
 
     def get_min_notional(self, symbol: str) -> float:
-        """Return minimum notional (quote value) required for an order on this symbol.
-
-        Binance may reject market orders if the quote value is below MIN_NOTIONAL/NOTIONAL filter.
-        We try multiple sources (ccxt limits then raw exchange filters) and return 0.0 if unknown.
+        """
+        Bybit Spot minimum notional (quote value) for an order.
         """
         try:
             m = self.exchange.market(symbol)
 
-            # 1) ccxt normalized limits (if available)
+            # 1) ccxt normalized limits
             cost_min = (((m.get("limits") or {}).get("cost") or {}).get("min"))
             if cost_min is not None:
                 return float(cost_min)
 
-            # 2) raw Binance filters
+            # 2) raw Bybit info filters
             info = m.get("info") or {}
-            filters = info.get("filters") or []
-            for f in filters:
-                t = str(f.get("filterType") or "").upper()
-                if t in ("MIN_NOTIONAL", "NOTIONAL"):
-                    v = f.get("minNotional")
-                    if v is None:
-                        v = f.get("minNotionalValue")
-                    if v is None:
-                        v = f.get("notional")
-                    if v is not None:
-                        return float(v)
+            # Bybit uses lotSizeFilter / priceFilter
+            lot_filter = info.get("lotSizeFilter") or {}
+            min_order_qty = lot_filter.get("minOrderQty")
+            if min_order_qty is not None:
+                # qty-based min — convert to notional approximation
+                try:
+                    price = self.fetch_last_price(symbol)
+                    return float(min_order_qty) * price
+                except Exception:
+                    pass
+
         except Exception as e:
             logger.warning(f"MIN_NOTIONAL_LOOKUP_FAIL | symbol={symbol} err={e}")
 
@@ -207,21 +178,15 @@ class BinanceSpotClient:
     # Precision helpers (STRING!)
     # ----------------------------
     def floor_amount(self, symbol: str, amount: float) -> float:
-        """
-        Returns float but derived from amount_to_precision (string) to avoid float artifacts.
-        """
         try:
-            s = self.exchange.amount_to_precision(symbol, amount)  # string like "0.00018"
+            s = self.exchange.amount_to_precision(symbol, amount)
             return float(s)
         except Exception:
             return float(amount)
 
     def floor_price(self, symbol: str, price: float) -> float:
-        """
-        Returns float but derived from price_to_precision (string) to avoid float artifacts.
-        """
         try:
-            s = self.exchange.price_to_precision(symbol, price)  # string like "76253.90"
+            s = self.exchange.price_to_precision(symbol, price)
             return float(s)
         except Exception:
             return float(price)
@@ -236,11 +201,18 @@ class BinanceSpotClient:
     # Orders
     # ----------------------------
     def place_market_buy_by_quote(self, symbol: str, quote_amount: float) -> Dict[str, Any]:
+        """
+        Bybit Spot market buy by quote (USDT).
+        Bybit ccxt-ში: create_order(..., params={"quoteOrderQty": ...}) ან
+        createMarketBuyOrderWithCost — ccxt unified method.
+        """
         self._guard(symbol, quote_amount=quote_amount)
         try:
-            params = {"quoteOrderQty": float(quote_amount)}
+            # ccxt unified: cost-based market buy
             return self._with_retry(
-                self.exchange.create_order, symbol, "market", "buy", None, None, params,
+                self.exchange.create_order,
+                symbol, "market", "buy", None, None,
+                {"quoteOrderQty": float(quote_amount)},
                 label="MARKET_BUY"
             )
         except ExchangeClientError:
@@ -281,9 +253,15 @@ class BinanceSpotClient:
             amt      = float(self.exchange.amount_to_precision(symbol, base_amount))
             stop_px  = float(self.exchange.price_to_precision(symbol, stop_price))
             limit_px = float(self.exchange.price_to_precision(symbol, limit_price))
-            params   = {"stopPrice": stop_px, "timeInForce": "GTC"}
+            # Bybit Spot stop-limit: triggerPrice param
+            params = {
+                "triggerPrice": stop_px,
+                "triggerBy":    "LastPrice",
+                "orderType":    "Limit",
+                "timeInForce":  "GTC",
+            }
             return self._with_retry(
-                self.exchange.create_order, symbol, "STOP_LOSS_LIMIT", "sell",
+                self.exchange.create_order, symbol, "limit", "sell",
                 float(amt), float(limit_px), params,
                 label="SL_LIMIT_SELL"
             )
@@ -294,28 +272,43 @@ class BinanceSpotClient:
 
     def place_oco_sell(self, symbol: str, base_amount: float, tp_price: float, sl_stop_price: float, sl_limit_price: float) -> Dict[str, Any]:
         """
-        Native Binance Spot OCO (single reserve).
-        IMPORTANT: use STRING precision to avoid -1111 price precision errors.
+        Bybit Spot-ს native OCO არ აქვს Binance-ის მსგავსად.
+        ვათავსებთ ორ ცალკე ორდერს: Limit TP + Stop-Limit SL.
+        OCO semantics: execution_engine უნდა მართავდეს cancel-ს fill-ის შემდეგ.
         """
         self._guard(symbol)
         try:
-            qty = self._amount_str(symbol, base_amount)
-            price = self._price_str(symbol, tp_price)
-            stop_price = self._price_str(symbol, sl_stop_price)
-            stop_limit_price = self._price_str(symbol, sl_limit_price)
+            qty      = self._amount_str(symbol, base_amount)
+            tp_px    = self._price_str(symbol, tp_price)
+            sl_stop  = self._price_str(symbol, sl_stop_price)
+            sl_limit = self._price_str(symbol, sl_limit_price)
 
-            payload = {
-                "symbol": self.exchange.market_id(symbol),
-                "side": "SELL",
-                "quantity": qty,
-                "price": price,
-                "stopPrice": stop_price,
-                "stopLimitPrice": stop_limit_price,
-                "stopLimitTimeInForce": "GTC",
+            # 1) TP — Limit Sell
+            tp_order = self._with_retry(
+                self.exchange.create_order,
+                symbol, "limit", "sell", float(qty), float(tp_px),
+                {"timeInForce": "GTC"},
+                label="OCO_TP"
+            )
+
+            # 2) SL — Stop-Limit Sell
+            sl_order = self._with_retry(
+                self.exchange.create_order,
+                symbol, "limit", "sell", float(qty), float(sl_limit),
+                {
+                    "triggerPrice": float(sl_stop),
+                    "triggerBy":    "LastPrice",
+                    "timeInForce":  "GTC",
+                },
+                label="OCO_SL"
+            )
+
+            return {
+                "raw": {
+                    "tp_order": tp_order,
+                    "sl_order": sl_order,
+                    "oco_emulated": True,
+                }
             }
-
-            # direct endpoint call (stable)
-            res = self.exchange.privatePostOrderOco(payload)
-            return {"raw": res}
         except Exception as e:
             raise ExchangeClientError(f"OCO sell failed: {e}")
