@@ -61,8 +61,8 @@ def _safe_sell_amount(exchange, symbol: str, raw_qty: float, price: float = 0.0)
 
     Steps:
       1. floor_amount → step-size aligned qty
-      2. min_qty check (Binance LOT_SIZE filter)
-      3. min_notional check (Binance MIN_NOTIONAL filter, $10 default)
+      2. min_qty check (Exchange LOT_SIZE filter)
+      3. min_notional check (Exchange MIN_NOTIONAL filter, $10 default)
 
     Returns 0.0 if qty is below any minimum — caller's <=0 guard catches it.
 
@@ -124,7 +124,14 @@ class ExecutionEngine:
         self.env_kill_switch = _cfg.KILL_SWITCH
         self.live_confirmation = _cfg.LIVE_CONFIRMATION
 
-        self.price_feed = ccxt.binance({"enableRateLimit": True})
+        self.price_feed = ccxt.bybit({
+            "enableRateLimit": True,
+            "options": {
+                "defaultType":      "spot",
+                "fetchCurrencies":  False,
+                "fetchTradingFees": False,
+            },
+        })
 
         self.exchange = None
         if self.mode in ("LIVE", "TESTNET"):
@@ -757,7 +764,7 @@ class ExecutionEngine:
                             logger.info(
                                 f"DUST_IGNORED_TP | sym={symbol} "
                                 f"free_{_dust_base}={_dust_free:.8f} × price={_dust_price:.2f} "
-                                f"= {_dust_free*_dust_price:.4f} USDT (below Binance min — immaterial)"
+                                f"= {_dust_free*_dust_price:.4f} USDT (below exchange min — immaterial)"
                             )
                     except Exception as _ds_e:
                         logger.debug(f"DUST_SWEEP_TP_FAIL | sym={symbol} err={_ds_e}")
@@ -857,7 +864,7 @@ class ExecutionEngine:
                             logger.info(
                                 f"DUST_IGNORED_SL | sym={symbol} "
                                 f"free_{_dust_base_sl}={_dust_free_sl:.8f} = "
-                                f"{_dust_free_sl*_dust_price_sl:.4f} USDT (below Binance min)"
+                                f"{_dust_free_sl*_dust_price_sl:.4f} USDT (below exchange min)"
                             )
                     except Exception as _ds_sl_e:
                         logger.debug(f"DUST_SWEEP_SL_FAIL | sym={symbol} err={_ds_sl_e}")
@@ -1097,7 +1104,7 @@ class ExecutionEngine:
             msg = (
                 f"SELL_SKIP_BELOW_MIN | id={signal_id} symbol={symbol} "
                 f"free_{base_asset}={free_base:.8f} last_price={last_price:.4f} "
-                f"(qty or notional below Binance minimum)"
+                f"(qty or notional below exchange minimum)"
             )
             logger.warning(msg)
             log_event("SELL_SKIP_BELOW_MIN", msg)
@@ -1926,7 +1933,7 @@ class ExecutionEngine:
                 msg = (
                     f"OCO_SKIP_BELOW_MIN | id={signal_id} symbol={symbol} "
                     f"free_{base_asset}={free_base:.8f} buy_avg={buy_avg:.4f} "
-                    f"(qty or notional below Binance minimum)"
+                    f"(qty or notional below exchange minimum)"
                 )
                 logger.warning(msg)
                 log_event("OCO_SKIP_BELOW_MIN", msg)
@@ -2067,22 +2074,29 @@ class ExecutionEngine:
             tp_order_id = ""
             sl_order_id = ""
 
+            # Bybit emulated OCO — tp_order/sl_order in raw dict
+            if not tp_order_id and raw.get("tp_order"):
+                tp_order_id = str(raw["tp_order"].get("id") or "")
+            if not sl_order_id and raw.get("sl_order"):
+                sl_order_id = str(raw["sl_order"].get("id") or "")
+
+            # Fallback: Binance-style orders list
             for x in orders:
-                oid = str(x.get("orderId") or "")
+                oid = str(x.get("orderId") or x.get("id") or "")
                 typ = str(x.get("type") or "").upper()
-                if typ == "LIMIT_MAKER":
+                if typ in ("LIMIT_MAKER", "LIMIT") and not tp_order_id:
                     tp_order_id = oid
-                elif typ == "STOP_LOSS_LIMIT":
+                elif typ in ("STOP_LOSS_LIMIT", "STOP") and not sl_order_id:
                     sl_order_id = oid
 
             if not tp_order_id or not sl_order_id:
                 reports = raw.get("orderReports") or []
                 for rep in reports:
-                    oid = str(rep.get("orderId") or "")
+                    oid = str(rep.get("orderId") or rep.get("id") or "")
                     typ = str(rep.get("type") or "").upper()
-                    if typ == "LIMIT_MAKER" and not tp_order_id:
+                    if typ in ("LIMIT_MAKER", "LIMIT") and not tp_order_id:
                         tp_order_id = oid
-                    elif typ == "STOP_LOSS_LIMIT" and not sl_order_id:
+                    elif typ in ("STOP_LOSS_LIMIT", "STOP") and not sl_order_id:
                         sl_order_id = oid
 
             create_oco_link(
