@@ -1,26 +1,21 @@
-# package marker
-# main.py - Python path რეგულატორი (სწრაფი ამოხსნა)
+# execution/__init__.py
+# Package marker - Python-ს უთქვამს: "execution ფოლდერი = მოდული"
 
-import sys
-import os
+"""
+Execution package - ბოტის გაშვება და ტრეიდინგი
+"""
 
-# 🔧 დაამატე src ფოლდერი Python path
-# ეს უხელი Python-ს იპოვის execution, indicators, filters ფოლდერი
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+__version__ = "1.0.0"
+__author__ = "GENIUS Trading Bot"
 
-# ახლა შემდეგი იმპორტი მუშაობს:
-# from execution.regime_engine import MarketRegimeEngine
-# from indicators.rsi import RSI
-# ... და სხვა
+# დაიმპორტე მნიშვნელოვანი კლასი
+try:
+    from execution.regime_engine import MarketRegimeEngine
+    from execution.order_executor import OrderExecutor
+except ImportError as e:
+    print(f"Warning: Could not import from execution: {e}")
 
-# თქვენი ორიგინალი კოდი აქ:
-if __name__ == "__main__":
-    # დაწყება ბოტი
-    print("🚀 ბოტი იშვება...")
-    
-    # ... (თქვენი კოდი აქ)
-    
-    # მაგალითი:
-    # from execution.regime_engine import MarketRegimeEngine
-    # bot = MarketRegimeEngine()
-    # bot.start()
+__all__ = [
+    'MarketRegimeEngine',
+    'OrderExecutor',
+]
