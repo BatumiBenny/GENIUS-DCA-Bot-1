@@ -381,10 +381,11 @@ def main():
 
     engine = ExecutionEngine()
 
-    try:
-        engine.reconcile_oco()
-    except Exception as e:
-        logger.warning(f"OCO_RECONCILE_START_WARN | err={e}")
+    # DCA MODE: reconcile_oco გათიშულია — OCO არ გამოიყენება
+    # try:
+    #     engine.reconcile_oco()
+    # except Exception as e:
+    #     logger.warning(f"OCO_RECONCILE_START_WARN | err={e}")
 
     generate_once = _try_import_generator()
 
@@ -426,10 +427,11 @@ def main():
                 time.sleep(sleep_s)
                 continue
 
-            try:
-                engine.reconcile_oco()
-            except Exception as e:
-                logger.warning(f"OCO_RECONCILE_LOOP_WARN | err={e}")
+            # DCA MODE: reconcile_oco გათიშულია loop-შიც
+            # try:
+            #     engine.reconcile_oco()
+            # except Exception as e:
+            #     logger.warning(f"OCO_RECONCILE_LOOP_WARN | err={e}")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # DCA LOOP — add-on check + TP/SL + breakeven + force close
