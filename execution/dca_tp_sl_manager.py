@@ -66,7 +66,7 @@ class DCATpSlManager:
 
     def __init__(self) -> None:
         self.tp_pct              = _ef("DCA_TP_PCT",                  2.0)
-        self.sl_pct              = _ef("DCA_SL_PCT",                  6.0)
+        self.sl_pct              = _ef("DCA_SL_PCT",                  999.0)  # DCA: default=999 (disabled)
         self.sl_confirm_candles  = _ei("DCA_SL_CONFIRM_CANDLES",      2)
         self.breakeven_trigger   = _ef("DCA_BREAKEVEN_TRIGGER_PCT",    0.5)
 
@@ -164,7 +164,7 @@ class DCATpSlManager:
         sl_price  = float(position.get("current_sl_price", 0.0))
         add_on_n  = int(position.get("add_on_count", 0))
         max_n     = int(position.get("max_add_ons", _ei("DCA_MAX_ADD_ONS", 3)))
-        max_dd    = float(position.get("max_drawdown_pct", _ef("DCA_MAX_DRAWDOWN_PCT", 8.0)))
+        max_dd    = float(position.get("max_drawdown_pct", _ef("DCA_MAX_DRAWDOWN_PCT", 999.0)))  # DCA: default=999 (disabled)
 
         if avg_entry <= 0:
             return False, "no_avg_entry"
@@ -175,9 +175,10 @@ class DCATpSlManager:
         if drawdown > max_dd:
             return True, f"MAX_DRAWDOWN {drawdown:.2f}% > {max_dd:.1f}%"
 
-        # max add-ons AND below SL
-        if add_on_n >= max_n and sl_price > 0 and current_price < sl_price:
-            return True, f"MAX_ADD_ONS_REACHED ({add_on_n}/{max_n}) + BELOW_SL"
+        # DCA MODE: max add-ons + below SL force close გათიშულია
+        # ბოტი ინახავს პოზიციას სანამ TP-ს არ მიაღწევს
+        # if add_on_n >= max_n and sl_price > 0 and current_price < sl_price:
+        #     return True, f"MAX_ADD_ONS_REACHED ({add_on_n}/{max_n}) + BELOW_SL"
 
         return False, "OK"
 
