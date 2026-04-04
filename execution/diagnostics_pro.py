@@ -467,8 +467,8 @@ ENV_RULES: List[Tuple] = [
     ("ALLOW_LIVE_SIGNALS",     "true",       "eq",     "CRITICAL", "signals enabled"),
     ("LIVE_CONFIRMATION",      "true",       "eq",     "WARN",     "live confirmation"),
     # ─── API ─────────────────────────────────────────────────────
-    ("BYBIT_API_KEY",          None,         "nonempty","CRITICAL","Bybit API key"),
-    ("BYBIT_API_SECRET",       None,         "nonempty","CRITICAL","Bybit API secret"),
+    ("BINANCE_API_KEY",        None,         "nonempty","CRITICAL","Binance API key"),
+    ("BINANCE_API_SECRET",     None,         "nonempty","CRITICAL","Binance API secret"),
     # ─── Symbols ─────────────────────────────────────────────────
     ("BOT_SYMBOLS",            None,         "nonempty","CRITICAL","trading symbols"),
     ("BOT_TIMEFRAME",          "15m",        "eq",     "WARN",     "candle timeframe"),
@@ -1025,12 +1025,12 @@ def check_api_connectivity(rep: Report):
     import json as _json
 
     # Bybit public REST endpoint
-    base = "https://api.bybit.com/v5/market"
+    base = "https://api.binance.com/api/v3"
 
     # 1. Ping — Bybit server time endpoint (public, no auth)
     try:
         req = urllib.request.Request(
-            "https://api.bybit.com/v5/market/time",
+            "https://api.binance.com/api/v3/time",
             headers={"User-Agent": "GeniusBot-Diag/1.0"}
         )
         with urllib.request.urlopen(req, timeout=3) as resp:
