@@ -502,11 +502,17 @@ def main():
                     # ძველი კოდი SELL-საც ჩერდებოდა SIDEWAYS-ზე!
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     if verdict == "SELL":
+                        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        # DCA MODE: SELL სიგნალი გათიშულია!
+                        # DCA სტრატეგიაზე ჩვენ ვინახავთ პოზიციას ვარდნისას.
+                        # SELL სიგნალი DCA trade-ს დახურავდა ზარალზე.
+                        # DCA manager-ი მართავს გაყიდვას TP-ზე.
+                        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         logger.info(
-                            f"[AUTO] SELL signal → bypass regime check | "
+                            f"[AUTO] SELL signal → DCA MODE: blocked | "
                             f"id={signal_id} source={sig.get('meta', {}).get('source', 'UNKNOWN')}"
                         )
-                        engine.execute_signal(sig)
+                        # engine.execute_signal(sig)  # DCA: disabled
 
                     elif verdict == "TRADE":
                         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
