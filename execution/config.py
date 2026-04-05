@@ -112,7 +112,7 @@ MAX_TRADES_PER_DAY       = _env_int("MAX_TRADES_PER_DAY",      10)   # SYNC: 25�
 MAX_TRADES_PER_HOUR      = _env_int("MAX_TRADES_PER_HOUR",      3)   # SYNC: 8→3
 MAX_CONSECUTIVE_LOSSES   = _env_int("MAX_CONSECUTIVE_LOSSES",   5)   # SYNC: 3→5
 MAX_DAILY_LOSS           = _env_float("MAX_DAILY_LOSS",         3.0)  # SYNC: 2.0→3.0
-MAX_ACCOUNT_DRAWDOWN     = _env_float("MAX_ACCOUNT_DRAWDOWN",   7.0)
+MAX_ACCOUNT_DRAWDOWN     = _env_float("MAX_ACCOUNT_DRAWDOWN",   999.0)
 MAX_RISK_PER_TRADE_PCT   = _env_float("MAX_RISK_PER_TRADE_PCT", 0.0)
 
 
@@ -122,7 +122,7 @@ MAX_RISK_PER_TRADE_PCT   = _env_float("MAX_RISK_PER_TRADE_PCT", 0.0)
 
 # SYNC: config.py had 1.0 — signal_generator.py uses 1.5 → align to 1.5
 TP_PCT = _env_float("TP_PCT", 1.5)   # SYNC: 1.0→1.5
-SL_PCT = _env_float("SL_PCT", 0.80)   # ENV=0.80
+SL_PCT = _env_float("SL_PCT", 999.0)   # ENV=0.80
 
 ATR_MULT_TP_BULL = _env_float("ATR_MULT_TP_BULL", 4.0)   # SYNC: 3.0→4.0
 ATR_MULT_SL_BULL = _env_float("ATR_MULT_SL_BULL", 2.0)   # SYNC: 1.2→2.0
@@ -136,11 +136,11 @@ USE_PARTIAL_TP   = _env_bool("USE_PARTIAL_TP", "true")
 PARTIAL_TP1_PCT  = _env_float("PARTIAL_TP1_PCT",  1.0)   # SYNC: 1.5→1.0
 PARTIAL_TP1_SIZE = _env_float("PARTIAL_TP1_SIZE", 0.5)
 
-USE_BREAKEVEN_STOP    = _env_bool("USE_BREAKEVEN_STOP",    "true")
+USE_BREAKEVEN_STOP    = _env_bool("USE_BREAKEVEN_STOP",    "false")
 BREAKEVEN_TRIGGER_PCT = _env_float("BREAKEVEN_TRIGGER_PCT", 0.48)  # ENV=0.48
 
 # SYNC: config.py had false/0.25 — signal_generator.py uses true/0.35 → align
-TRAILING_STOP_ENABLED  = _env_bool("TRAILING_STOP_ENABLED",  "true")  # SYNC: false→true
+TRAILING_STOP_ENABLED  = _env_bool("TRAILING_STOP_ENABLED",  "false")  # SYNC: false→true
 TRAILING_STOP_DISTANCE = _env_float("TRAILING_STOP_DISTANCE", 0.25)   # ENV=0.25
 
 # SYNC: config.py had 2 — signal_generator.py uses 3 → align
@@ -334,7 +334,7 @@ DCA_ENABLED              = _env_bool("DCA_ENABLED",              "false")
 DCA_MAX_ADD_ONS          = _env_int("DCA_MAX_ADD_ONS",           3)
 DCA_MAX_CAPITAL_USDT     = _env_float("DCA_MAX_CAPITAL_USDT",    40.0)
 DCA_MAX_TOTAL_USDT       = _env_float("DCA_MAX_TOTAL_USDT",      60.0)
-DCA_MAX_DRAWDOWN_PCT     = _env_float("DCA_MAX_DRAWDOWN_PCT",    8.0)
+DCA_MAX_DRAWDOWN_PCT     = _env_float("DCA_MAX_DRAWDOWN_PCT",    999.0)
 DCA_MIN_NOTIONAL         = _env_float("DCA_MIN_NOTIONAL",        10.0)
 
 # trigger drawdowns per add-on (%) — comma-separated
@@ -345,7 +345,7 @@ DCA_ADDON_SIZES          = _env_str("DCA_ADDON_SIZES",           "10,10,10")
 
 # TP/SL (DCA-ზე SL ბევრად დიდია — averaging სჭირდება სივრცეს)
 DCA_TP_PCT               = _env_float("DCA_TP_PCT",              2.0)
-DCA_SL_PCT               = _env_float("DCA_SL_PCT",              6.0)
+DCA_SL_PCT               = _env_float("DCA_SL_PCT",              999.0)
 
 # SL confirmation candles (noise filter)
 DCA_SL_CONFIRM_CANDLES   = _env_int("DCA_SL_CONFIRM_CANDLES",    2)
