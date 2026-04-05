@@ -608,15 +608,26 @@ def _drop_unclosed_candle(ohlcv: List[List[float]], timeframe: str) -> Tuple[Lis
 # EXCHANGE BUILDER
 # -----------------------------
 def _build_exchange() -> ccxt.Exchange:
-    market_type = os.getenv("MARKET_TYPE", "spot").strip().lower()
     api_key    = os.getenv("BINANCE_API_KEY",    "").strip()
     api_secret = os.getenv("BINANCE_API_SECRET", "").strip()
-    return ccxt.binance({
+    ex = ccxt.binance({
         "enableRateLimit": True,
         "apiKey":  api_key,
         "secret":  api_secret,
-        "options": {"defaultType": market_type},
+        "options": {
+            "defaultType":      "spot",
+            "fetchCurrencies":  False,
+            "fetchTradingFees": False,
+        },
     })
+    # load_markets ერთხელ — cache-დება.
+    # fetch_ohlcv-ზე load_markets() აღარ გამოიძახება — rate limit fix.
+    try:
+        ex.load_markets()
+        logger.info("[GEN] EXCHANGE_MARKETS_CACHED | OK")
+    except Exception as e:
+        logger.warning(f"[GEN] EXCHANGE_MARKETS_WARN | err={e}")
+    return ex
 
 
 EXCHANGE = _build_exchange()
