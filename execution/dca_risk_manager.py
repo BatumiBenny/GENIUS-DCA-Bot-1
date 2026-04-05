@@ -50,7 +50,7 @@ class DCARiskManager:
         self.max_open_positions = _ei("MAX_OPEN_TRADES",       2)
         self.max_per_symbol     = _ef("DCA_MAX_CAPITAL_USDT",  40.0)
         self.max_total_exposure = _ef("DCA_MAX_TOTAL_USDT",    60.0)
-        self.max_drawdown_pct   = _ef("DCA_MAX_DRAWDOWN_PCT",  8.0)
+        self.max_drawdown_pct   = _ef("DCA_MAX_DRAWDOWN_PCT",  999.0)
         self.min_notional       = _ef("DCA_MIN_NOTIONAL",      10.0)  # Binance minimum
 
         logger.info(
