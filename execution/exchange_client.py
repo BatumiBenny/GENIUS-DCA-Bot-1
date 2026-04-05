@@ -58,7 +58,9 @@ class BinanceSpotClient:
             "secret":          api_secret,
             "enableRateLimit": True,
             "options": {
-                "defaultType": "spot",  # Spot trading
+                "defaultType":      "spot",   # Binance Spot
+                "fetchCurrencies":  False,    # ზედმეტი API call
+                "fetchTradingFees": False,    # ზედმეტი API call
             },
         }
 
@@ -73,10 +75,11 @@ class BinanceSpotClient:
 
         self.exchange = ccxt.binance(exchange_config)
 
-        # warm up markets for precision helpers
+        # load_markets ერთხელ startup-ზე — ccxt cache-ავს შედეგს.
+        # fetch_ohlcv-ზე load_markets-ი აღარ გამოიძახება — rate limit fix.
         try:
             self.exchange.load_markets()
-            logger.info("BINANCE_LOAD_MARKETS | OK")
+            logger.info("BINANCE_LOAD_MARKETS | OK | markets cached")
         except Exception as e:
             logger.warning(f"LOAD_MARKETS_WARN | err={e}")
 
@@ -139,43 +142,24 @@ class BinanceSpotClient:
         return float(t["last"])
 
     def get_min_notional(self, symbol: str) -> float:
-        """
-        Bybit Spot minimum notional (quote value) for an order.
-        """
+        """Binance Spot minimum notional for an order."""
         try:
             m = self.exchange.market(symbol)
-
-            # 1) ccxt normalized limits
             cost_min = (((m.get("limits") or {}).get("cost") or {}).get("min"))
             if cost_min is not None:
                 return float(cost_min)
-
-            # 2) raw Bybit info filters
-            info = m.get("info") or {}
-            # Bybit uses lotSizeFilter / priceFilter
-            lot_filter = info.get("lotSizeFilter") or {}
-            min_order_qty = lot_filter.get("minOrderQty")
-            if min_order_qty is not None:
-                # qty-based min — convert to notional approximation
-                try:
-                    price = self.fetch_last_price(symbol)
-                    return float(min_order_qty) * price
-                except Exception:
-                    pass
-
+            for f in (m.get("info") or {}).get("filters", []):
+                if f.get("filterType") in ("MIN_NOTIONAL", "NOTIONAL"):
+                    return float(f.get("minNotional", 0.0))
         except Exception as e:
             logger.warning(f"MIN_NOTIONAL_LOOKUP_FAIL | symbol={symbol} err={e}")
-
-        return 0.0
+        return 10.0  # Binance Spot default $10
 
     def fetch_balance_free(self, asset: str) -> float:
+        # Binance Spot — type=spot კმარა, unified Bybit-ისთვის იყო
         try:
-            bal = self.exchange.fetch_balance({"type": "unified"})
-            free = float((bal.get("free", {}) or {}).get(asset.upper(), 0.0) or 0.0)
-            if free == 0.0:
-                bal2 = self.exchange.fetch_balance({"type": "spot"})
-                free = float((bal2.get("free", {}) or {}).get(asset.upper(), 0.0) or 0.0)
-            return free
+            bal = self.exchange.fetch_balance()
+            return float((bal.get("free", {}) or {}).get(asset.upper(), 0.0) or 0.0)
         except Exception as e:
             logger.warning(f"FETCH_BALANCE_FAIL | asset={asset} err={e}")
             return 0.0
@@ -260,20 +244,15 @@ class BinanceSpotClient:
             raise ExchangeClientError(f"Limit sell failed: {e}")
 
     def place_stop_loss_limit_sell(self, symbol: str, base_amount: float, stop_price: float, limit_price: float) -> Dict[str, Any]:
+        # Binance Spot STOP_LOSS_LIMIT order
         self._guard(symbol)
         try:
             amt      = float(self.exchange.amount_to_precision(symbol, base_amount))
             stop_px  = float(self.exchange.price_to_precision(symbol, stop_price))
             limit_px = float(self.exchange.price_to_precision(symbol, limit_price))
-            # Bybit Spot stop-limit: triggerPrice param
-            params = {
-                "triggerPrice": stop_px,
-                "triggerBy":    "LastPrice",
-                "orderType":    "Limit",
-                "timeInForce":  "GTC",
-            }
+            params = {"stopPrice": stop_px, "timeInForce": "GTC"}
             return self._with_retry(
-                self.exchange.create_order, symbol, "limit", "sell",
+                self.exchange.create_order, symbol, "STOP_LOSS_LIMIT", "sell",
                 float(amt), float(limit_px), params,
                 label="SL_LIMIT_SELL"
             )
@@ -281,6 +260,7 @@ class BinanceSpotClient:
             raise
         except Exception as e:
             raise ExchangeClientError(f"Stop-loss-limit sell failed: {e}")
+
 
     def place_oco_sell(self, symbol: str, base_amount: float, tp_price: float, sl_stop_price: float, sl_limit_price: float) -> Dict[str, Any]:
         """
