@@ -45,7 +45,7 @@ BOT_QUOTE_PER_TRADE = float(os.getenv("BOT_QUOTE_PER_TRADE", "10"))   # ENV=10
 MAX_QUOTE_PER_TRADE = float(os.getenv("MAX_QUOTE_PER_TRADE", "10"))   # ENV=10
 
 # Fee-aware edge gate
-MIN_MOVE_PCT = float(os.getenv("MIN_MOVE_PCT", "0.22"))  # ENV=0.22 (synced)
+MIN_MOVE_PCT = float(os.getenv("MIN_MOVE_PCT", "0.02"))  # DCA: 0.22→0.02 (BTC/BNB always passes)
 ESTIMATED_ROUNDTRIP_FEE_PCT = float(os.getenv("ESTIMATED_ROUNDTRIP_FEE_PCT", "0.14"))  # ENV=0.14
 ESTIMATED_SLIPPAGE_PCT = float(os.getenv("ESTIMATED_SLIPPAGE_PCT", "0.05"))              # ENV=0.05
 TP_PCT = float(os.getenv("TP_PCT", "1.5"))                                               # ENV=1.5%
@@ -63,7 +63,7 @@ MA_GAP_PCT = float(os.getenv("MA_GAP_PCT", "0.15"))
 # Flat 15m market confidence_score ≈ 0.30-0.42 range.
 # 0.38 ბლოკავდა real signals — ვხედავდით BLOCKED_BY_CONF_STATIC ხშირად.
 # 0.32 = meaningful quality gate, still filters noise (score<0.25 = random)
-BUY_CONFIDENCE_MIN = float(os.getenv("BUY_CONFIDENCE_MIN", "0.25"))  # DCA: 0.46→0.25
+BUY_CONFIDENCE_MIN = float(os.getenv("BUY_CONFIDENCE_MIN", "0.15"))  # DCA: 0.25→0.15 (more signals)
 
 BLOCK_SIGNALS_WHEN_ACTIVE_OCO = os.getenv("BLOCK_SIGNALS_WHEN_ACTIVE_OCO", "true").strip().lower() == "true"
 
@@ -105,12 +105,12 @@ GEN_TEST_SIGNAL = os.getenv("GEN_TEST_SIGNAL", "false").strip().lower() == "true
 # volume_score < this → skip (stricter than soft-volume-override)
 # FIX WIN-6: 0.40→0.25. Flat/night market volume_score ≈ 0.20-0.45.
 # 0.40 blocked legitimate low-volatility entries. 0.25 = still filters dead volume.
-BUY_LIQUIDITY_MIN_SCORE = float(os.getenv("BUY_LIQUIDITY_MIN_SCORE", "0.40"))  # ENV=0.40 (synced)
+BUY_LIQUIDITY_MIN_SCORE = float(os.getenv("BUY_LIQUIDITY_MIN_SCORE", "0"))  # DCA: off (BTC/BNB always liquid)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # #1 RSI + MACD filter
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE_RSI_FILTER        = os.getenv("USE_RSI_FILTER", "true").strip().lower() == "true"
+USE_RSI_FILTER        = os.getenv("USE_RSI_FILTER", "false").strip().lower() == "true"  # DCA: off
 RSI_PERIOD            = int(os.getenv("RSI_PERIOD", "14"))
 RSI_MIN               = float(os.getenv("RSI_MIN", "35"))
 RSI_MAX               = float(os.getenv("RSI_MAX", "72"))          # ENV=72
@@ -119,7 +119,7 @@ RSI_MAX               = float(os.getenv("RSI_MAX", "72"))          # ENV=72
 # ადრე: trade-ები 15 SL-ზე დაიხურა, RSI 72-ს არასოდეს მიაღწია.
 RSI_SELL_MIN          = float(os.getenv("RSI_SELL_MIN", "72"))     # ENV=72 (synced)
 
-USE_MACD_FILTER       = os.getenv("USE_MACD_FILTER", "true").strip().lower() == "true"
+USE_MACD_FILTER       = os.getenv("USE_MACD_FILTER", "false").strip().lower() == "true"  # DCA: off
 MACD_FAST             = int(os.getenv("MACD_FAST", "12"))
 MACD_SLOW             = int(os.getenv("MACD_SLOW", "26"))
 MACD_SIGNAL_PERIOD    = int(os.getenv("MACD_SIGNAL_PERIOD", "9"))
@@ -127,7 +127,7 @@ MACD_SIGNAL_PERIOD    = int(os.getenv("MACD_SIGNAL_PERIOD", "9"))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # #2 Multi-timeframe confirmation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE_MTF_FILTER        = os.getenv("USE_MTF_FILTER", "true").strip().lower() == "true"
+USE_MTF_FILTER        = os.getenv("USE_MTF_FILTER", "false").strip().lower() == "true"  # DCA: off
 MTF_TIMEFRAME         = os.getenv("MTF_TIMEFRAME", "1h").strip()
 MTF_CANDLE_LIMIT      = int(os.getenv("MTF_CANDLE_LIMIT", "50"))
 
@@ -140,7 +140,7 @@ MTF_CANDLE_LIMIT      = int(os.getenv("MTF_CANDLE_LIMIT", "50"))
 # 18 = filters pure noise (ADX<15), allows range directional moves.
 # ADX > 25 = strong trend (still best entries)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE_ADX_FILTER        = os.getenv("USE_ADX_FILTER", "true").strip().lower() == "true"
+USE_ADX_FILTER        = os.getenv("USE_ADX_FILTER", "false").strip().lower() == "true"  # DCA: off
 ADX_MIN_THRESHOLD     = float(os.getenv("ADX_MIN_THRESHOLD", "23.0"))  # ENV=23 (synced)
 ADX_PERIOD            = int(os.getenv("ADX_PERIOD", "14"))
 
@@ -153,7 +153,7 @@ ADX_PERIOD            = int(os.getenv("ADX_PERIOD", "14"))
 # 0.6% ბლოკავდა momentum entries uptrend-ზე
 # 1.0% = allows institutional-quality momentum entries
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE_VWAP_FILTER       = os.getenv("USE_VWAP_FILTER", "true").strip().lower() == "true"
+USE_VWAP_FILTER       = os.getenv("USE_VWAP_FILTER", "false").strip().lower() == "true"  # DCA: off
 VWAP_TOLERANCE        = float(os.getenv("VWAP_TOLERANCE", "0.006"))   # ENV=0.006 (synced)
 # VWAP_SESSION_BARS — რამდენი candle გამოიყენოს VWAP გამოთვლაში
 # 96 = 24h (15m × 96). 0 = ყველა candle (ძველი ქცევა)
@@ -234,7 +234,7 @@ USE_BREAKEVEN_STOP    = os.getenv("USE_BREAKEVEN_STOP", "true").strip().lower() 
 BREAKEVEN_TRIGGER_PCT = float(os.getenv("BREAKEVEN_TRIGGER_PCT", "0.48"))  # ENV=0.48 (synced)
 
 # Soft structure override (USED ONLY WHEN USE_MA_FILTERS=false)
-STRUCT_SOFT_OVERRIDE = os.getenv("STRUCT_SOFT_OVERRIDE", "true").strip().lower() == "true"
+STRUCT_SOFT_OVERRIDE = os.getenv("STRUCT_SOFT_OVERRIDE", "false").strip().lower() == "true"  # DCA: off
 STRUCT_SOFT_MIN_TREND = float(os.getenv("STRUCT_SOFT_MIN_TREND", "0.25"))        # ENV=0.25
 STRUCT_SOFT_MIN_MA_GAP = float(os.getenv("STRUCT_SOFT_MIN_MA_GAP", "0.10"))      # ENV=0.10
 STRUCT_SOFT_REQUIRE_LAST_UP = int(os.getenv("STRUCT_SOFT_REQUIRE_LAST_UP", "1")) # ENV=1
@@ -1666,82 +1666,11 @@ def generate_signal() -> Optional[Dict[str, Any]]:
         mom1 = _momentum(closes, 1) if len(closes) > 1 else 0.0
 
         if open_trade:
-            # SELL პირობები: trend < -0.15 AND mom1 < -0.01
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # #1 RSI SELL: RSI > RSI_SELL_MIN(60) + trend reversal → ადრე გასვლა
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            rsi_sell = _rsi(closes, RSI_PERIOD) if USE_RSI_FILTER else 50.0
-
-            # FIX I-1: one-shot per open_trade — RSI spike = 1 SELL, არა spam
-            rsi_cool_zone = RSI_SELL_MIN - 3
-            if rsi_sell < rsi_cool_zone:
-                _rsi_sell_fired[symbol] = False
-            already_fired    = _rsi_sell_fired.get(symbol, False)
-            rsi_sell_trigger = USE_RSI_FILTER and rsi_sell >= RSI_SELL_MIN and not already_fired
-
-            # FIX WIN-2: trend threshold -0.10→-0.05, mom1 -0.005→-0.002
-            # Log analysis: trend=0.000 mom1=-0.0001 ვერ trigger-ებდა SELL-ს
-            # 15m flat ბაზარი: trend oscillates [-0.05..+0.05] — -0.10 UNREACHABLE
-            # -0.05 = სუსტი downtrend sufficient for exit protection
-            # mom1 -0.002 = მცირე negative momentum — ადრე exit = better SL avoidance
-            sell_triggered = (trend < SELL_TREND_THRESHOLD and mom1 < -0.002) or rsi_sell_trigger
-
-            if sell_triggered:
-                signal_id = str(uuid.uuid4())
-                sig = {
-                    "signal_id": signal_id,
-                    "ts_utc": _now_utc_iso(),
-                    "certified_signal": True,
-                    "final_verdict": "SELL",
-                    "trend":   round(trend, 4),
-                    "atr_pct": round(atrp, 4),
-                    "meta": {
-                        "source": "GEN_SIGNAL_SELL",
-                        "symbol": symbol,
-                        "reason": "RSI_OVERBOUGHT" if rsi_sell_trigger else "TREND_REVERSAL",
-                        "trend": trend,
-                        "mom1": mom1,
-                        "rsi":  round(rsi_sell, 2) if USE_RSI_FILTER else None,
-                        "ai_score": float(decision["ai_score"]),
-                        "decision_was": decision["final_trade_decision"],
-                    },
-                    "execution": {
-                        "symbol": symbol,
-                        "direction": "LONG",
-                    }
-                }
-                logger.info(
-                    f"[GEN] TREND_REVERSAL_SELL | symbol={symbol} "
-                    f"trend={trend:.3f} mom1={mom1:.4f} "
-                    f"rsi={rsi_sell:.1f} rsi_trigger={rsi_sell_trigger} "
-                    f"decision_was={decision['final_trade_decision']} — COOLDOWN BYPASSED"
-                )
-                # Advisory qty check — signal_generator-ი approximate qty-ს იყენებს
-                # ნამდვილ remaining qty-ს execution_engine-ი DB-დან კითხულობს
-                # → ეს warning only, არ ბლოკავს SELL-ს
-                _sell_price = last if last > 0 else closes[-1]
-                _sell_qty_approx = BOT_QUOTE_PER_TRADE / _sell_price if _sell_price > 0 else 0.0
-                _qty_ok, _qty_reason = _is_sellable_qty(symbol, _sell_qty_approx, _sell_price)
-                if not _qty_ok and GEN_DEBUG:
-                    logger.warning(
-                        f"[GEN] SELL_QTY_ADVISORY | symbol={symbol} "
-                        f"approx_qty={_sell_qty_approx:.6f} reason={_qty_reason} "
-                        f"(execution_engine handles actual qty)"
-                    )
-                # append_signal პირდაპირ — cooldown bypass (SELL არ ყოვნდება 60s)
-                if rsi_sell_trigger:
-                    _rsi_sell_fired[symbol] = True  # I-1: ერთხელ გაისვრა
-                append_signal(sig, outbox_path)
-                return sig
-
-            # open trade-ია, SELL პირობა არ სრულდება — BUY-ს ნუ ვცდილობთ
+            # DCA MODE: ღია trade-ზე SELL სიგნალს აღარ ვამოწმებთ signal_generator-ში.
+            # გაყიდვა მართავს dca_tp_sl_manager.py — TP hit, SL confirmed, force close.
+            # PROTECTIVE_SELL (crash EXTREME) კვლავ მუშაობს protective_sell ბლოკში.
             if GEN_DEBUG:
-                logger.info(
-                    f"[GEN] SELL_NOT_TRIGGERED | symbol={symbol} "
-                    f"trend={trend:.3f} (need<{SELL_TREND_THRESHOLD}) mom1={mom1:.4f} (need<-0.002) "
-                    f"rsi={_rsi(closes, RSI_PERIOD):.1f} (sell_min={RSI_SELL_MIN}) "
-                    f"→ holding position"
-                )
+                logger.info(f"[GEN] OPEN_TRADE | {symbol} → DCA manager handles exit, skipping BUY")
             continue
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
