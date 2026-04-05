@@ -621,7 +621,6 @@ def _build_exchange() -> ccxt.Exchange:
         },
     })
     # load_markets ერთხელ — cache-დება.
-    # fetch_ohlcv-ზე load_markets() აღარ გამოიძახება — rate limit fix.
     try:
         ex.load_markets()
         logger.info("[GEN] EXCHANGE_MARKETS_CACHED | OK")
@@ -631,6 +630,33 @@ def _build_exchange() -> ccxt.Exchange:
 
 
 EXCHANGE = _build_exchange()
+
+
+def _fetch_ohlcv_direct(symbol: str, timeframe: str, limit: int) -> list:
+    """
+    Binance Klines — პირდაპირი REST call, ccxt load_markets() bypass.
+    ccxt.fetch_ohlcv() ყოველ call-ზე load_markets()-ს ამოწმებს → rate limit.
+    ეს ფუნქცია პირდაპირ https://api.binance.com/api/v3/klines-ს იძახებს.
+    """
+    import urllib.request
+    import json as _json
+
+    TF_MAP = {
+        "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m",
+        "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h",
+        "6h": "6h", "8h": "8h", "12h": "12h", "1d": "1d",
+    }
+    tf = TF_MAP.get(timeframe, "15m")
+    sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
+    url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={tf}&limit={limit}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            raw = _json.loads(r.read())
+        # Binance კანდელი: [open_time, open, high, low, close, volume, ...]
+        return [[c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
+    except Exception as e:
+        logger.warning(f"[GEN] FETCH_OHLCV_DIRECT_FAIL | {symbol} err={e} → fallback ccxt")
+        return EXCHANGE.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 
 # Exchange minimum qty per symbol (spot) — cache to avoid repeated API calls
 _market_info_cache: dict = {}  # {symbol: {min_qty, min_notional, qty_step}}
@@ -1131,7 +1157,7 @@ def _mtf_trend_ok(symbol: str) -> Tuple[bool, str, str]:
     Returns (ok, reason, htf_regime)
     """
     try:
-        ohlcv_h = EXCHANGE.fetch_ohlcv(symbol, timeframe=MTF_TIMEFRAME, limit=MTF_CANDLE_LIMIT)
+        ohlcv_h = _fetch_ohlcv_direct(symbol, MTF_TIMEFRAME, MTF_CANDLE_LIMIT)
         if not ohlcv_h or len(ohlcv_h) < 52:
             return True, "not_enough_data→skip", None
         ohlcv_h, _ = _drop_unclosed_candle(ohlcv_h, MTF_TIMEFRAME)
@@ -1239,7 +1265,7 @@ def generate_signal() -> Optional[Dict[str, Any]]:
             continue
 
         try:
-            ohlcv_quick = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
+            ohlcv_quick = _fetch_ohlcv_direct(symbol, TIMEFRAME, 30)
         except Exception:
             continue
 
@@ -1442,7 +1468,7 @@ def generate_signal() -> Optional[Dict[str, Any]]:
         recovery_passed = False
         for sym in SYMBOLS:
             try:
-                ohlcv_r = EXCHANGE.fetch_ohlcv(sym, timeframe=TIMEFRAME, limit=RECOVERY_CANDLES + 5)
+                ohlcv_r = _fetch_ohlcv_direct(sym, TIMEFRAME, RECOVERY_CANDLES + 5)
             except Exception:
                 continue
             if not ohlcv_r or len(ohlcv_r) < RECOVERY_CANDLES + 1:
@@ -1541,7 +1567,7 @@ def generate_signal() -> Optional[Dict[str, Any]]:
                     )
             else:
                 try:
-                    ohlcv_ah = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
+                    ohlcv_ah = _fetch_ohlcv_direct(symbol, TIMEFRAME, 30)
                     if ohlcv_ah and len(ohlcv_ah) >= 10:
                         ohlcv_ah, _ = _drop_unclosed_candle(ohlcv_ah, TIMEFRAME)
                         closes_ah = [float(c[4]) for c in ohlcv_ah]
@@ -1597,7 +1623,7 @@ def generate_signal() -> Optional[Dict[str, Any]]:
                 continue
 
         try:
-            ohlcv = EXCHANGE.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=CANDLE_LIMIT)
+            ohlcv = _fetch_ohlcv_direct(symbol, TIMEFRAME, CANDLE_LIMIT)
         except Exception as e:
             logger.exception(f"[GEN] FETCH_FAIL | symbol={symbol} tf={TIMEFRAME} err={e}")
             continue
