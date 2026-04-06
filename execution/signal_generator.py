@@ -47,7 +47,7 @@ MAX_QUOTE_PER_TRADE = float(os.getenv("MAX_QUOTE_PER_TRADE", "10"))   # ENV=10
 # Fee-aware edge gate
 MIN_MOVE_PCT = float(os.getenv("MIN_MOVE_PCT", "0.02"))  # DCA: 0.22→0.02 (BTC/BNB always passes)
 ESTIMATED_ROUNDTRIP_FEE_PCT = float(os.getenv("ESTIMATED_ROUNDTRIP_FEE_PCT", "0.14"))  # ENV=0.14
-ESTIMATED_SLIPPAGE_PCT = float(os.getenv("ESTIMATED_SLIPPAGE_PCT", "0.05"))              # ENV=0.05
+ESTIMATED_SLIPPAGE_PCT = 0.0  # DCA: disabled
 TP_PCT = float(os.getenv("TP_PCT", "1.5"))                                               # ENV=1.5%
 MIN_NET_PROFIT_PCT = float(os.getenv("MIN_NET_PROFIT_PCT", "0.25"))                     # ENV=0.25
 
@@ -78,7 +78,7 @@ GEN_LOG_EVERY_TICK = os.getenv("GEN_LOG_EVERY_TICK", "true").strip().lower() == 
 MIN_VOLUME_24H = float(os.getenv("MIN_VOLUME_24H", "5000000"))   # DCA: 30M→5M
 
 # 2. Signal expiration — signal ts_utc-დან SIGNAL_EXPIRATION_SECONDS გასული → skip
-SIGNAL_EXPIRATION_SECONDS = int(os.getenv("SIGNAL_EXPIRATION_SECONDS", "600"))  # ENV=600s
+SIGNAL_EXPIRATION_SECONDS = 0  # DCA: disabled
 
 # 3. AI confidence boost — ai_score * AI_CONFIDENCE_BOOST (>1.0 ამაღლებს score-ს)
 AI_CONFIDENCE_BOOST = float(os.getenv("AI_CONFIDENCE_BOOST", "1.05"))  # ENV=1.05
@@ -201,18 +201,18 @@ MACD_HIST_ATR_FACTOR  = float(os.getenv("MACD_HIST_ATR_FACTOR", "0.2"))  # ENV=0
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # #3 Trailing Stop
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TRAILING_STOP_ENABLED   = os.getenv("TRAILING_STOP_ENABLED", "false").strip().lower() == "true"   # ENV=true
+TRAILING_STOP_ENABLED   = False  # DCA: disabled
 # FIX WIN-8: TRAILING_STOP_DISTANCE 0.25→0.35
 # BTC/ETH 15m candle noise ≈ 0.20-0.30%. 0.25% trailing = noise trigger.
 # 0.35% = beyond typical 15m noise, still locks in profits on real moves.
-TRAILING_STOP_DISTANCE  = float(os.getenv("TRAILING_STOP_DISTANCE", "0.25"))  # ENV=0.25 (synced)
+TRAILING_STOP_DISTANCE  = 0.25  # DCA: disabled (trailing off)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # #4 Dynamic position sizing
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 USE_DYNAMIC_SIZING    = os.getenv("USE_DYNAMIC_SIZING", "true").strip().lower() == "true"
-DYNAMIC_SIZE_MIN      = float(os.getenv("DYNAMIC_SIZE_MIN", "8.0"))    # ENV=8
-DYNAMIC_SIZE_MAX      = float(os.getenv("DYNAMIC_SIZE_MAX", "10.0"))   # ENV=10
+DYNAMIC_SIZE_MIN      = 10.0  # DCA: fixed $10
+DYNAMIC_SIZE_MAX      = 10.0  # DCA: fixed $10
 DYNAMIC_SIZE_AI_LOW   = float(os.getenv("DYNAMIC_SIZE_AI_LOW",  "0.55"))
 DYNAMIC_SIZE_AI_HIGH  = float(os.getenv("DYNAMIC_SIZE_AI_HIGH", "0.80"))
 
@@ -226,7 +226,7 @@ PARTIAL_TP1_SIZE      = float(os.getenv("PARTIAL_TP1_SIZE", "0.5"))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # #7 Breakeven Stop
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-USE_BREAKEVEN_STOP    = os.getenv("USE_BREAKEVEN_STOP", "false").strip().lower() == "true"
+USE_BREAKEVEN_STOP    = False  # DCA: disabled
 # FIX WIN-9: BREAKEVEN_TRIGGER_PCT 0.40→0.30
 # Activates breakeven protection when price is 0.30% above entry (was 0.40%).
 # Earlier activation = more trades protected from reverting to SL loss.
