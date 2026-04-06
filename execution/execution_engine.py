@@ -149,10 +149,10 @@ class ExecutionEngine:
 
         self.max_spread_pct = _cfg.MAX_SPREAD_PCT
         self.estimated_roundtrip_fee_pct = _cfg.ESTIMATED_ROUNDTRIP_FEE_PCT
-        self.estimated_slippage_pct = _cfg.ESTIMATED_SLIPPAGE_PCT
+        self.estimated_slippage_pct = 0.0  # DCA: disabled
         self.min_net_profit_pct = _cfg.MIN_NET_PROFIT_PCT
 
-        self.entry_mode = os.getenv("ENTRY_MODE", "MARKET").strip().upper()
+        self.entry_mode = "MARKET"  # DCA: always MARKET
         self.limit_entry_offset_pct = float(os.getenv("LIMIT_ENTRY_OFFSET_PCT", "0.03"))   # ENV=0.03
         self.limit_entry_timeout_sec = int(os.getenv("LIMIT_ENTRY_TIMEOUT_SEC", "15"))     # ENV=15
 
@@ -175,12 +175,12 @@ class ExecutionEngine:
 
         # MAX_ACCOUNT_DRAWDOWN — % balance drop from session start → KILL (0=off)
         # e.g. 7 = if balance drops 7% from start → stop all trading
-        self.max_account_drawdown_pct = _cfg.MAX_ACCOUNT_DRAWDOWN
+        self.max_account_drawdown_pct = 999.0  # DCA: disabled
         self._session_start_balance: Optional[float] = None  # set on first live BUY
 
         # MAX_RISK_PER_TRADE_PCT — max % of balance per single trade (0=off)
         # e.g. 1.0 = max 1% of balance per trade → overrides BOT_QUOTE_PER_TRADE if lower
-        self.max_risk_per_trade_pct = _cfg.MAX_RISK_PER_TRADE_PCT
+        self.max_risk_per_trade_pct = 0.0  # DCA: disabled
 
         # CAPITAL_USAGE_MIN/MAX — % of balance that should be deployed (informational + guard)
         # MAX: if open exposure > MAX % of balance → skip new BUY
@@ -189,11 +189,11 @@ class ExecutionEngine:
 
         # MAX_PORTFOLIO_EXPOSURE — max % of total balance in open trades (0=off)
         # e.g. 0.75 = max 75% of balance can be in open positions at once
-        self.max_portfolio_exposure = _cfg.MAX_PORTFOLIO_EXPOSURE
+        self.max_portfolio_exposure = 0.0  # DCA: disabled
 
         # MAX_SYMBOL_EXPOSURE — max % of balance in any single symbol (0=off)
         # e.g. 0.40 = max 40% of balance in BTC/USDT at once
-        self.max_symbol_exposure = _cfg.MAX_SYMBOL_EXPOSURE
+        self.max_symbol_exposure = 0.0  # DCA: disabled
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # STRATEGY / MARKET MODE flags — logging + future branching
@@ -223,7 +223,7 @@ class ExecutionEngine:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # #3 Trailing Stop
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        self.trailing_stop_enabled  = _cfg.TRAILING_STOP_ENABLED
+        self.trailing_stop_enabled  = False  # DCA: disabled
         self.trailing_stop_distance = _cfg.TRAILING_STOP_DISTANCE
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -236,7 +236,7 @@ class ExecutionEngine:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # #7 Breakeven Stop
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        self.use_breakeven_stop    = _cfg.USE_BREAKEVEN_STOP
+        self.use_breakeven_stop    = False  # DCA: disabled
         self.breakeven_trigger_pct = _cfg.BREAKEVEN_TRIGGER_PCT
 
         # trailing peak tracker: {signal_id: peak_price}
