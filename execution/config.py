@@ -163,11 +163,11 @@ AI_EXECUTE_MIN_SCORE     = _env_float("AI_EXECUTE_MIN_SCORE",   0.40)  # ENV=0.4
 # SYNC: was 0.45 — disabled in ENV (=0) → default 0 = disabled
 AI_SIGNAL_THRESHOLD      = _env_float("AI_SIGNAL_THRESHOLD",    0.0)   # SYNC: 0.45→0 (disabled)
 # SYNC: was true — blocks too aggressively in live market → false
-AI_FILTER_LOW_CONFIDENCE = _env_bool("AI_FILTER_LOW_CONFIDENCE", "true")   # ENV=true
+AI_FILTER_LOW_CONFIDENCE = _env_bool("AI_FILTER_LOW_CONFIDENCE", "false")   # DCA: off
 
 # SYNC: config.py had 0.36/0.30 — signal_generator.py uses 0.32/0.25 → align
-BUY_CONFIDENCE_MIN      = _env_float("BUY_CONFIDENCE_MIN",      0.46)  # ENV=0.46
-BUY_LIQUIDITY_MIN_SCORE = _env_float("BUY_LIQUIDITY_MIN_SCORE", 0.40)  # ENV=0.40
+BUY_CONFIDENCE_MIN      = _env_float("BUY_CONFIDENCE_MIN",      0.15)  # DCA: 0.46→0.15
+BUY_LIQUIDITY_MIN_SCORE = _env_float("BUY_LIQUIDITY_MIN_SCORE", 0.0)   # DCA: off (0=disabled)
 
 # FIX GLOBAL-6: THRESHOLD_CONF / THRESHOLD_TREND / THRESHOLD_VOLUME —
 # ეს სამი ცვლადი DEAD CODE-ია: signal_generator.py და execution_engine.py
@@ -205,14 +205,14 @@ SOFT_VOLUME_REQUIRE_VOLBAND = _env_bool("SOFT_VOLUME_REQUIRE_VOLBAND", "false") 
 # FILTERS (MA / MACD / MTF / RSI / ADX / VWAP)
 # ─────────────────────────────────────────────
 
-USE_MA_FILTERS  = _env_bool("USE_MA_FILTERS",  "false")
-USE_MACD_FILTER = _env_bool("USE_MACD_FILTER", "true")
-USE_MTF_FILTER  = _env_bool("USE_MTF_FILTER",  "true")
-USE_RSI_FILTER  = _env_bool("USE_RSI_FILTER",  "true")
-USE_ADX_FILTER  = _env_bool("USE_ADX_FILTER",  "true")
-USE_VWAP_FILTER = _env_bool("USE_VWAP_FILTER", "true")
-USE_TIME_FILTER = _env_bool("USE_TIME_FILTER", "true")
-USE_FUNDING_FILTER = _env_bool("USE_FUNDING_FILTER", "true")
+USE_MA_FILTERS     = _env_bool("USE_MA_FILTERS",     "false")
+USE_MACD_FILTER    = _env_bool("USE_MACD_FILTER",    "false")   # DCA: off
+USE_MTF_FILTER     = _env_bool("USE_MTF_FILTER",     "false")   # DCA: off
+USE_RSI_FILTER     = _env_bool("USE_RSI_FILTER",     "false")   # DCA: off
+USE_ADX_FILTER     = _env_bool("USE_ADX_FILTER",     "false")   # DCA: off
+USE_VWAP_FILTER    = _env_bool("USE_VWAP_FILTER",    "false")   # DCA: off
+USE_TIME_FILTER    = _env_bool("USE_TIME_FILTER",    "false")   # DCA: off
+USE_FUNDING_FILTER = _env_bool("USE_FUNDING_FILTER", "false")   # DCA: off
 
 ADX_MIN_THRESHOLD = _env_float("ADX_MIN_THRESHOLD", 23.0)  # ENV=23
 ADX_PERIOD        = _env_int("ADX_PERIOD", 14)
