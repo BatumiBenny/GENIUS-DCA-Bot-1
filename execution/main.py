@@ -43,7 +43,7 @@ from execution.telegram_notifier import (
 logger = logging.getLogger("gbm")
 
 # SIGNAL_EXPIRATION_SECONDS — outbox-დან წამოღებული ძველი signal-ი → skip
-_SIGNAL_EXPIRATION_SECONDS = int(os.getenv("SIGNAL_EXPIRATION_SECONDS", "0"))
+_SIGNAL_EXPIRATION_SECONDS = 0  # DCA: disabled
 
 
 def _bootstrap_state_if_needed() -> None:
