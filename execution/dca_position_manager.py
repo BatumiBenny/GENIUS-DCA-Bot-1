@@ -337,22 +337,11 @@ class DCAPositionManager:
             remaining = int(self.addon_cooldown - (time.time() - last_ts))
             return False, f"ADDON_COOLDOWN_ACTIVE ({remaining}s remaining)"
 
-        # 7. recovery signal check (falling knife protection)
-        score, details = score_recovery_signals(ohlcv)
-        if score < self.min_recovery_score:
-            logger.info(
-                f"[DCA] RECOVERY_FAIL | score={score}/{self.min_recovery_score} "
-                f"rsi={details.get('rsi')} macd={details.get('macd_ok')} "
-                f"vol={details.get('vol_score')} atr={details.get('atr_pct')} "
-                f"wick={details.get('wick_ok')}"
-            )
-            return False, f"NO_RECOVERY_SIGNAL (score={score}/{self.min_recovery_score})"
-
+        # DCA: recovery signal check გათიშულია
+        # ბოტი ყოველთვის ამატებს add-on-ს drawdown trigger-ზე
         logger.info(
             f"[DCA] ADD_ON_OK | level={n+1} drawdown={drawdown:.2f}% "
-            f"trigger={trigger:.1f}% size={next_size} recovery_score={score}/5 "
-            f"| rsi={details.get('rsi')} macd_ok={details.get('macd_ok')} "
-            f"vol={details.get('vol_score')} atr={details.get('atr_pct')}"
+            f"trigger={trigger:.1f}% size={next_size}"
         )
         return True, "OK"
 
