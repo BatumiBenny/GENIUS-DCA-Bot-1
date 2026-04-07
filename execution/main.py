@@ -159,7 +159,6 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
         open_dca_position,
     )
     from execution.dca_position_manager import recalculate_average, score_recovery_signals
-    import ccxt, time
 
     open_positions = get_all_open_dca_positions()
     if not open_positions:
@@ -233,8 +232,9 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
 
             # ── 3. Fetch ohlcv for signal analysis ───────────────────────
             try:
+                from execution.signal_generator import _fetch_ohlcv_direct
                 tf = os.getenv("BOT_TIMEFRAME", "15m")
-                ohlcv = engine.exchange.exchange.fetch_ohlcv(sym, timeframe=tf, limit=60)
+                ohlcv = _fetch_ohlcv_direct(sym, tf, 60)
             except Exception as e:
                 logger.warning(f"[DCA] OHLCV_FAIL | {sym} err={e}")
                 continue
