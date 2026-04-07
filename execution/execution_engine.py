@@ -1968,18 +1968,23 @@ class ExecutionEngine:
                     _tp_sl_prices = _tp_sl.calculate(float(buy_avg))
                     _dca_qty = float(sell_amount) if sell_amount > 0 else (float(quote_amount) / float(buy_avg))
 
+                    # DCA: SL=0 (გათიშულია), TP=avg_entry × (1 + DCA_TP_PCT%)
+                    _dca_tp_pct = float(os.getenv("DCA_TP_PCT", "0.55"))
+                    _tp_price   = round(float(buy_avg) * (1.0 + _dca_tp_pct / 100.0), 6)
+                    _sl_price   = 0.0  # DCA: SL გათიშულია
+
                     pos_id = open_dca_position(
                         symbol=str(symbol),
                         initial_entry_price=float(buy_avg),
                         initial_qty=_dca_qty,
                         initial_quote_spent=float(quote_amount),
-                        tp_price=_tp_sl_prices["tp_price"],
-                        sl_price=_tp_sl_prices["sl_price"],
-                        tp_pct=float(_tp_sl_prices["tp_pct"]),
-                        sl_pct=float(_tp_sl_prices["sl_pct"]),
-                        max_add_ons=int(os.getenv("DCA_MAX_ADD_ONS", "2")),
-                        max_capital=float(os.getenv("DCA_MAX_CAPITAL_USDT", "30.0")),
-                        max_drawdown_pct=float(os.getenv("DCA_MAX_DRAWDOWN_PCT", "80.0")),
+                        tp_price=_tp_price,
+                        sl_price=_sl_price,
+                        tp_pct=_dca_tp_pct,
+                        sl_pct=999.0,
+                        max_add_ons=int(os.getenv("DCA_MAX_ADD_ONS", "3")),
+                        max_capital=float(os.getenv("DCA_MAX_CAPITAL_USDT", "20.0")),
+                        max_drawdown_pct=999.0,
                     )
 
                     add_dca_order(
@@ -1990,8 +1995,8 @@ class ExecutionEngine:
                         qty=_dca_qty,
                         quote_spent=float(quote_amount),
                         avg_entry_after=float(buy_avg),
-                        tp_after=_tp_sl_prices["tp_price"],
-                        sl_after=_tp_sl_prices["sl_price"],
+                        tp_after=_tp_price,
+                        sl_after=_sl_price,
                         trigger_drawdown_pct=0.0,
                         rsi_at_entry=0.0,
                         atr_pct_at_entry=0.0,
@@ -1999,22 +2004,21 @@ class ExecutionEngine:
                         exchange_order_id=str(buy.get("id", "")),
                     )
 
-                    log_event("DCA_POSITION_OPENED", f"{signal_id} {symbol} avg={buy_avg:.4f} qty={_dca_qty:.8f} tp={_tp_sl_prices['tp_price']:.4f} sl={_tp_sl_prices['sl_price']:.4f}")
-                    logger.info(f"DCA_POSITION_OPENED | {symbol} entry={buy_avg:.4f} tp={_tp_sl_prices['tp_price']:.4f} sl={_tp_sl_prices['sl_price']:.4f}")
+                    log_event("DCA_POSITION_OPENED", f"{signal_id} {symbol} avg={buy_avg:.4f} qty={_dca_qty:.8f} tp={_tp_price:.4f} sl=0.0")
+                    logger.info(f"DCA_POSITION_OPENED | {symbol} entry={buy_avg:.4f} tp={_tp_price:.4f} sl=0.0")
                 else:
                     logger.info(f"DCA_POSITION_EXISTS | {symbol} → skipped open (add-on will handle)")
             except Exception as _dca_err:
                 logger.warning(f"DCA_OPEN_WARN | id={signal_id} err={_dca_err} → trade tracked in trades table only")
 
             try:
-                _dca_tp_pct = float(os.getenv("DCA_TP_PCT", "1.5"))
-                _dca_sl_pct = float(os.getenv("DCA_SL_PCT", "6.0"))
+                _dca_tp_pct = float(os.getenv("DCA_TP_PCT", "0.55"))
                 notify_signal_created(
                     symbol=str(symbol),
                     entry_price=float(buy_avg),
                     quote_amount=float(quote_amount),
                     tp_price=float(buy_avg) * (1.0 + _dca_tp_pct / 100.0),
-                    sl_price=float(buy_avg) * (1.0 - _dca_sl_pct / 100.0),
+                    sl_price=0.0,  # DCA: SL გათიშულია
                     verdict="BUY",
                     mode=self.mode,
                 )
