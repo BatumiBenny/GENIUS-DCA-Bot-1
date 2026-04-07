@@ -173,14 +173,21 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
             # current price
             current_price = engine.exchange.fetch_last_price(sym)
             if not current_price or current_price <= 0:
+                logger.warning(f"[DCA] NO_PRICE | {sym}")
                 continue
 
-            avg_entry  = float(pos["avg_entry_price"])
-            tp_price   = float(pos["current_tp_price"] or 0)
-            sl_price   = float(pos["current_sl_price"] or 0)
-            total_qty  = float(pos["total_qty"])
-            total_quote = float(pos["total_quote_spent"])
-            add_on_count = int(pos["add_on_count"])
+            avg_entry    = float(pos["avg_entry_price"] or 0)
+            tp_price     = float(pos["current_tp_price"] or 0)
+            sl_price     = 0.0  # DCA: SL გათიშულია — ყოველთვის 0
+            total_qty    = float(pos["total_qty"] or 0)
+            total_quote  = float(pos["total_quote_spent"] or 0)
+            add_on_count = int(pos["add_on_count"] or 0)
+
+            logger.info(
+                f"[DCA] MONITOR | {sym} price={current_price:.4f} "
+                f"avg={avg_entry:.4f} tp={tp_price:.4f} "
+                f"qty={total_qty:.6f} add_ons={add_on_count}"
+            )
 
             # ── 1. TP hit ────────────────────────────────────────────────
             if tp_price > 0 and current_price >= tp_price:
