@@ -23,6 +23,9 @@ from execution.db.repository import (
     log_event,
     get_trade_stats,
     get_closed_trades,
+    close_trade,
+    get_open_trade_for_symbol,
+    reset_consecutive_sl_per_symbol,
 )
 from execution.execution_engine import ExecutionEngine
 from execution.signal_client import pop_next_signal
@@ -170,8 +173,14 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
 
         try:
             # current price
-            current_price = engine.exchange.fetch_last_price(sym)
-            if not current_price or current_price <= 0:
+            try:
+                current_price = engine.exchange.fetch_last_price(sym)
+                current_price = float(current_price) if current_price else 0.0
+            except Exception as _pe:
+                logger.warning(f"[DCA] PRICE_FETCH_ERR | {sym} err={_pe}")
+                current_price = 0.0
+
+            if current_price <= 0:
                 logger.warning(f"[DCA] NO_PRICE | {sym}")
                 continue
 
@@ -196,7 +205,28 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                     exit_price = float(sell.get("average") or sell.get("price") or current_price)
                     pnl_quote = (exit_price - avg_entry) * total_qty
                     pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
+
+                    # ── dca_positions დახურვა ──────────────────────────
                     close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "TP")
+
+                    # ── FIX: trades ცხრილის დახურვა ───────────────────
+                    _open_tr = get_open_trade_for_symbol(sym)
+                    if _open_tr:
+                        close_trade(_open_tr[0], exit_price, "TP", pnl_quote, pnl_pct)
+                        logger.info(f"[DCA] TRADE_CLOSED_TP | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
+                    else:
+                        logger.warning(f"[DCA] TRADE_NOT_FOUND | {sym} — trades row missing on TP")
+
+                    # ── SL cooldown reset (TP = recovery) ─────────────
+                    try:
+                        reset_consecutive_sl_per_symbol(sym)
+                    except Exception as _e:
+                        logger.warning(f"[DCA] SL_RESET_FAIL | {sym} err={_e}")
+
+                    try:
+                        log_event("DCA_CLOSED_TP", f"sym={sym} exit={exit_price:.4f} pnl={pnl_quote:+.4f} pct={pnl_pct:.3f}%")
+                    except Exception:
+                        pass
 
                     from execution.telegram_notifier import notify_dca_closed
                     from execution.db.repository import get_trade_stats
@@ -219,7 +249,21 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                     exit_price = float(sell.get("average") or sell.get("price") or current_price)
                     pnl_quote = (exit_price - avg_entry) * total_qty
                     pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
+
                     close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "FORCE_CLOSE")
+
+                    # ── FIX: trades ცხრილის დახურვა ───────────────────
+                    _open_tr = get_open_trade_for_symbol(sym)
+                    if _open_tr:
+                        close_trade(_open_tr[0], exit_price, "FORCE_CLOSE", pnl_quote, pnl_pct)
+                        logger.info(f"[DCA] TRADE_CLOSED_FC | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
+                    else:
+                        logger.warning(f"[DCA] TRADE_NOT_FOUND | {sym} — trades row missing on FORCE_CLOSE")
+
+                    try:
+                        log_event("DCA_FORCE_CLOSE", f"sym={sym} reason={fc_reason} exit={exit_price:.4f} pnl={pnl_quote:+.4f}")
+                    except Exception:
+                        pass
 
                     from execution.telegram_notifier import notify_dca_closed
                     notify_dca_closed(
@@ -252,7 +296,27 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                         exit_price = float(sell.get("average") or sell.get("price") or current_price)
                         pnl_quote = (exit_price - avg_entry) * total_qty
                         pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
+
                         close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "SL")
+
+                        # ── FIX: trades ცხრილის დახურვა ───────────────
+                        _open_tr = get_open_trade_for_symbol(sym)
+                        if _open_tr:
+                            close_trade(_open_tr[0], exit_price, "SL", pnl_quote, pnl_pct)
+                            logger.info(f"[DCA] TRADE_CLOSED_SL | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
+                        else:
+                            logger.warning(f"[DCA] TRADE_NOT_FOUND | {sym} — trades row missing on SL")
+
+                        try:
+                            from execution.db.repository import increment_consecutive_sl_per_symbol
+                            increment_consecutive_sl_per_symbol(sym)
+                        except Exception as _e:
+                            logger.warning(f"[DCA] SL_INCREMENT_FAIL | {sym} err={_e}")
+
+                        try:
+                            log_event("DCA_CLOSED_SL", f"sym={sym} reason={sl_reason} exit={exit_price:.4f} pnl={pnl_quote:+.4f}")
+                        except Exception:
+                            pass
 
                         from execution.telegram_notifier import notify_dca_closed
                         notify_dca_closed(
@@ -410,7 +474,8 @@ def main():
     engine.inject_regime_engine(regime_engine)
 
     # DCA managers init
-    _dca_enabled = os.getenv("DCA_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+    # DCA MODE: DCA_ENABLED ENV-დან — default true (DCA ბოტია)
+    _dca_enabled = os.getenv("DCA_ENABLED", "true").strip().lower() in ("1", "true", "yes")
     dca_mgr   = get_dca_manager()   if _dca_enabled else None
     tp_sl_mgr = get_tp_sl_manager() if _dca_enabled else None
     risk_mgr  = get_risk_manager()  if _dca_enabled else None
