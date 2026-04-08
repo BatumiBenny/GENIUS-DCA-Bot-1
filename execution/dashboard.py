@@ -726,7 +726,7 @@ def create_dashboard_app():
 
     @app.route('/health')
     def health():
-        return jsonify({"status": "ok", "bot": "GENIUS BOT JAIANI"🤖})
+        return jsonify({"status": "ok", "bot": "GENIUS BOT JAIANI\U0001f916"})
 
     return app
 
