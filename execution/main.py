@@ -895,6 +895,19 @@ def main():
     init_db()
     _bootstrap_state_if_needed()
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # LIVE DASHBOARD — background thread, port 8080
+    # URL: https://your-render-url.onrender.com/dashboard
+    # DASHBOARD_ENABLED=true ENV-ით ჩართვა/გამორთვა
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if os.getenv("DASHBOARD_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        try:
+            from execution.dashboard import start_dashboard
+            _dash_port = int(os.getenv("DASHBOARD_PORT", "8080"))
+            start_dashboard(port=_dash_port)
+        except Exception as _de:
+            logger.warning(f"DASHBOARD_START_FAIL | err={_de}")
+
     engine = ExecutionEngine()
 
     # DCA MODE: reconcile_oco გათიშულია — OCO არ გამოიყენება
