@@ -621,6 +621,255 @@ def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
             logger.error(f"[LAYER2] ERR | {sym} err={e}")
 
 
+def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
+    """
+    Cascade DCA — "Rolling Exchange" სტრატეგია.
+
+    ლოგიკა:
+      - სულ გახსნილი Layer-ების რაოდენობა >= CASCADE_START_LAYER (default=7)?
+      - ყოველ symbol-ზე: ყველაზე ძველი Layer გამოვავლინოთ
+      - current_price <= oldest_layer_avg × (1 - CASCADE_DROP_PCT/100)?
+      - Exchange: ძველი Layer დავხუროთ (market sell) → ახალი Layer გავხსნათ
+        გამოთავისუფლებული თანხით (exchange_proceeds)
+      - Layer რაოდენობა >= CASCADE_MAX_LAYERS (default=10)?
+        → გაჩერება, CASCADE_RESUME_LAYER (default=16)-მდე ლოდინი
+
+    ENV:
+      CASCADE_ENABLED=true
+      CASCADE_START_LAYER=7       ← მე-7 სვლიდან იწყება
+      CASCADE_DROP_PCT=1.5        ← იგივე Layer2-ის trigger
+      CASCADE_MAX_LAYERS=10       ← მე-10-ზე გაჩერება
+      CASCADE_RESUME_LAYER=16     ← მე-16-ზე გახსნა
+      CASCADE_SYMBOLS=BTC/USDT,BNB/USDT,ETH/USDT
+    """
+    import os
+
+    if not os.getenv("CASCADE_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        return
+
+    from execution.db.repository import (
+        get_all_open_dca_positions,
+        close_dca_position,
+        open_dca_position,
+        add_dca_order,
+        open_trade,
+        get_open_trade_for_symbol,
+        close_trade,
+        log_event,
+    )
+
+    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "7"))
+    drop_pct       = float(os.getenv("CASCADE_DROP_PCT",   "1.5"))
+    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",   "10"))
+    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER", "16"))
+    symbols_raw    = os.getenv("CASCADE_SYMBOLS", "BTC/USDT,BNB/USDT,ETH/USDT")
+    symbols        = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+    tp_pct         = float(os.getenv("DCA_TP_PCT", "0.55"))
+    buffer         = float(os.getenv("SMART_ADDON_BUFFER", "5.0"))
+
+    # ყველა ღია პოზიცია
+    all_positions = get_all_open_dca_positions()
+
+    # სულ რამდენი Layer გვაქვს (Layer1 + Layer2 + _L2 + _L3 ...)
+    total_layers = len(all_positions)
+
+    logger.info(
+        f"[CASCADE] CHECK | total_layers={total_layers} "
+        f"start_at={cascade_start} max={max_layers} resume_at={resume_layer}"
+    )
+
+    # Cascade ჯერ არ დაწყებულა?
+    if total_layers < cascade_start:
+        logger.debug(f"[CASCADE] NOT_YET | {total_layers} < {cascade_start}")
+        return
+
+    # მე-10-ზე გაჩერება — resume_layer-ს ვეცდინოთ
+    if total_layers >= max_layers:
+        # resume_layer-ზე მიაღწია? — გახსენი
+        if total_layers < resume_layer:
+            logger.info(f"[CASCADE] PAUSED | {total_layers} >= {max_layers}, waiting for {resume_layer}")
+            return
+        else:
+            logger.warning(f"[CASCADE] RESUMING | total_layers={total_layers} >= {resume_layer}")
+
+    for sym in symbols:
+        try:
+            exchange_sym = sym
+
+            # current price
+            current_price = float(engine.exchange.fetch_last_price(exchange_sym) or 0.0)
+            if current_price <= 0:
+                continue
+
+            # ამ symbol-ის ყველა Layer — გახსნის დროის მიხედვით დავალაგოთ
+            sym_positions = [
+                p for p in all_positions
+                if str(p.get("symbol", "")).upper().replace("_L2", "").replace("_L3", "")
+                   .replace("_L4", "").replace("_L5", "").replace("_L6", "")
+                   .replace("_L7", "").replace("_L8", "").replace("_L9", "")
+                   .replace("_L10", "") == sym.upper()
+            ]
+
+            if len(sym_positions) < 2:
+                logger.debug(f"[CASCADE] {sym} | only {len(sym_positions)} layer(s) → skip")
+                continue
+
+            # ყველაზე ძველი Layer — opened_at მიხედვით
+            oldest = sorted(sym_positions, key=lambda p: str(p.get("opened_at", "")))[0]
+            oldest_avg = float(oldest.get("avg_entry_price", 0.0))
+            oldest_qty = float(oldest.get("total_qty", 0.0))
+            oldest_quote = float(oldest.get("total_quote_spent", 0.0))
+            oldest_id = oldest["id"]
+            oldest_sym = oldest["symbol"]
+
+            if oldest_avg <= 0 or oldest_qty <= 0:
+                continue
+
+            # ვარდნა ძველი avg-დან
+            drop_from_oldest = (oldest_avg - current_price) / oldest_avg * 100.0
+
+            logger.info(
+                f"[CASCADE] {sym} | oldest={oldest_sym} avg={oldest_avg:.4f} "
+                f"price={current_price:.4f} drop={drop_from_oldest:.2f}% trigger={drop_pct:.1f}%"
+            )
+
+            if drop_from_oldest < drop_pct:
+                logger.debug(f"[CASCADE] {sym} | drop={drop_from_oldest:.2f}% < {drop_pct:.1f}% → wait")
+                continue
+
+            # ბალანსი შემოწმება (buffer საჭიროა)
+            free_usdt = float(engine.exchange.fetch_balance_free("USDT") or 0.0)
+            if free_usdt < buffer:
+                logger.warning(f"[CASCADE] {sym} | low_balance={free_usdt:.2f} < buffer={buffer:.1f}")
+                continue
+
+            # ── Exchange: ძველი Layer-ის გაყიდვა ──────────────────────
+            logger.warning(
+                f"[CASCADE] EXCHANGE | {oldest_sym} avg={oldest_avg:.4f} "
+                f"qty={oldest_qty:.6f} drop={drop_from_oldest:.2f}%"
+            )
+
+            try:
+                sell = engine.exchange.place_market_sell(exchange_sym, oldest_qty)
+                sell_price = float(sell.get("average") or sell.get("price") or current_price)
+                proceeds = sell_price * oldest_qty
+                fee = proceeds * 0.001  # 0.1% fee
+                net_proceeds = round(proceeds - fee, 4)
+
+                pnl_quote = (sell_price - oldest_avg) * oldest_qty
+                pnl_pct   = (sell_price / oldest_avg - 1.0) * 100.0
+
+                # dca_positions დახურვა
+                close_dca_position(
+                    oldest_id, sell_price, oldest_qty,
+                    pnl_quote, pnl_pct, "CASCADE_EXCHANGE"
+                )
+
+                # trades დახურვა
+                open_tr = get_open_trade_for_symbol(oldest_sym)
+                if open_tr:
+                    close_trade(open_tr[0], sell_price, "CASCADE_EXCHANGE", pnl_quote, pnl_pct)
+
+                logger.warning(
+                    f"[CASCADE] SOLD | {oldest_sym} price={sell_price:.4f} "
+                    f"proceeds={net_proceeds:.4f} pnl={pnl_quote:+.4f}"
+                )
+
+            except Exception as _se:
+                logger.error(f"[CASCADE] SELL_FAIL | {oldest_sym} err={_se}")
+                continue
+
+            # ── ახალი Layer გახსნა net_proceeds-ით ───────────────────
+            if net_proceeds < 5.0:
+                logger.warning(f"[CASCADE] LOW_PROCEEDS | {net_proceeds:.4f} < $5 → skip new layer")
+                continue
+
+            # Layer ნომერი განვსაზღვროთ
+            layer_num = len(sym_positions)  # მიმდინარე + 1
+            new_sym = f"{sym}_L{layer_num + 1}"
+
+            try:
+                buy = engine.exchange.place_market_buy_by_quote(exchange_sym, net_proceeds)
+                buy_price = float(buy.get("average") or buy.get("price") or current_price)
+                buy_qty   = net_proceeds / buy_price
+                tp_price  = round(buy_price * (1.0 + tp_pct / 100.0), 6)
+
+                # dca_positions გახსნა
+                pos_id = open_dca_position(
+                    symbol=new_sym,
+                    initial_entry_price=buy_price,
+                    initial_qty=buy_qty,
+                    initial_quote_spent=net_proceeds,
+                    tp_price=tp_price,
+                    sl_price=0.0,
+                    tp_pct=tp_pct,
+                    sl_pct=999.0,
+                    max_add_ons=int(os.getenv("DCA_MAX_ADD_ONS", "1")),
+                    max_capital=float(os.getenv("DCA_MAX_CAPITAL_USDT", "20.0")),
+                    max_drawdown_pct=999.0,
+                )
+
+                add_dca_order(
+                    position_id=pos_id,
+                    symbol=new_sym,
+                    order_type="CASCADE_LAYER",
+                    entry_price=buy_price,
+                    qty=buy_qty,
+                    quote_spent=net_proceeds,
+                    avg_entry_after=buy_price,
+                    tp_after=tp_price,
+                    sl_after=0.0,
+                    trigger_drawdown_pct=drop_from_oldest,
+                    exchange_order_id=str(buy.get("id", "")),
+                )
+
+                # trades გახსნა
+                import uuid
+                cascade_signal_id = f"CAS-{sym.replace('/', '')}-{uuid.uuid4().hex[:8]}"
+                open_trade(
+                    signal_id=cascade_signal_id,
+                    symbol=new_sym,
+                    qty=buy_qty,
+                    quote_in=net_proceeds,
+                    entry_price=buy_price,
+                )
+
+                try:
+                    log_event(
+                        "CASCADE_LAYER_OPENED",
+                        f"sym={new_sym} entry={buy_price:.4f} tp={tp_price:.4f} "
+                        f"quote={net_proceeds:.4f} from={oldest_sym}"
+                    )
+                except Exception:
+                    pass
+
+                # Telegram
+                try:
+                    from execution.telegram_notifier import notify_signal_created
+                    notify_signal_created(
+                        symbol=new_sym,
+                        entry_price=buy_price,
+                        quote_amount=net_proceeds,
+                        tp_price=tp_price,
+                        sl_price=0.0,
+                        verdict="CASCADE_BUY",
+                        mode=engine.mode,
+                    )
+                except Exception as _tg:
+                    logger.warning(f"[CASCADE] TG_FAIL | err={_tg}")
+
+                logger.warning(
+                    f"[CASCADE] NEW_LAYER | {new_sym} entry={buy_price:.4f} "
+                    f"tp={tp_price:.4f} quote={net_proceeds:.4f}"
+                )
+
+            except Exception as _be:
+                logger.error(f"[CASCADE] BUY_FAIL | {new_sym} err={_be}")
+
+        except Exception as e:
+            logger.error(f"[CASCADE] ERR | {sym} err={e}")
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 
@@ -711,6 +960,16 @@ def main():
                     _check_and_open_layer2(engine, tp_sl_mgr)
                 except Exception as e:
                     logger.warning(f"LAYER2_CHECK_WARN | err={e}")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # CASCADE DCA — Rolling Exchange სტრატეგია
+            # მე-7 Layer-დან: ძველი → Exchange → ახალი Layer დაბლა
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if _dca_enabled and engine.exchange is not None:
+                try:
+                    _check_cascade_exchange(engine, tp_sl_mgr)
+                except Exception as e:
+                    logger.warning(f"CASCADE_CHECK_WARN | err={e}")
 
             if generate_once is not None:
                 try:
