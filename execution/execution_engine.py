@@ -1544,14 +1544,18 @@ class ExecutionEngine:
                 return
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 3b. MAX_OPEN_TRADES — global cross-symbol hard limit (LAST GATE).
-        # FIX GLOBAL-1: signal_generator-შიც შემოწმდება, მაგრამ execution
-        # engine-ი last-gate-ია — race condition-ის წინააღმდეგ.
-        # სცენარი: signal_generator signal-ს აგენერირებს → outbox-ში
-        # ელოდება → სანამ execution engine-ი კითხულობს, სხვა trade-ი
-        # გაიხსნა → total open >= MAX. ეს check ამ სიტუაციას ხურავს.
+        # 3b. MAX_OPEN_TRADES / MIN_OPEN_TRADES — Refill სტრატეგია
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        _max_open = int(os.getenv("MAX_OPEN_TRADES", "2"))   # ENV=2
+        # MAX_OPEN_TRADES=6  → მეტი არ იყიდება
+        # MIN_OPEN_TRADES=5  → 5-ზე ჩამოვიდა → სიგნალი დაუშვი → 6-ზე გახდება
+        #
+        # ლოგიკა:
+        #   open=8,7,6 → ბლოკავს (>= MAX)
+        #   open=5     → ყიდის (< MAX, but hit MIN threshold)
+        #   open=4,3.. → ყიდის სანამ MAX-ს არ მიაღწევს
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _max_open = int(os.getenv("MAX_OPEN_TRADES", "6"))
+        _min_open = int(os.getenv("MIN_OPEN_TRADES", "5"))
         if _max_open > 0:
             try:
                 _total_open_now = len(get_all_open_trades() or [])
@@ -1569,6 +1573,28 @@ class ExecutionEngine:
                         symbol=str(symbol)
                     )
                     return
+                elif _total_open_now > _min_open:
+                    # MIN-სა და MAX-ს შორის — ბლოკავს
+                    # მაგ: open=6 (min=5, max=6) → ბლოკავს
+                    # მაგ: open=5 (min=5) → 5 > 5 False → ყიდის ✅
+                    msg = (
+                        f"EXEC_REJECT | ABOVE_MIN_OPEN_TRADES | "
+                        f"total_open={_total_open_now} > min={_min_open} | id={signal_id}"
+                    )
+                    logger.info(msg)
+                    log_event("EXEC_REJECT_ABOVE_MIN", msg)
+                    mark_signal_id_executed(
+                        signal_id,
+                        signal_hash=signal_hash,
+                        action="REJECT_ABOVE_MIN_OPEN",
+                        symbol=str(symbol)
+                    )
+                    return
+                else:
+                    logger.info(
+                        f"[REFILL] open={_total_open_now} <= min={_min_open} "
+                        f"→ buying to refill to {_max_open}"
+                    )
             except Exception as _e:
                 logger.warning(f"MAX_OPEN_TRADES_CHECK_FAIL | err={_e} → skipped (fail-open)")
 
