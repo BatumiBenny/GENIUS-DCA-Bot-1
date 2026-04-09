@@ -797,9 +797,10 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             new_sym = f"{sym}_L{layer_num + 1}"
 
             try:
-                buy = engine.exchange.place_market_buy_by_quote(exchange_sym, net_proceeds)
+                buy_quote = max(net_proceeds, 10.0)  # მინიმუმ $10
+                buy = engine.exchange.place_market_buy_by_quote(exchange_sym, buy_quote)
                 buy_price = float(buy.get("average") or buy.get("price") or current_price)
-                buy_qty   = net_proceeds / buy_price
+                buy_qty   = buy_quote / buy_price
                 tp_price  = round(buy_price * (1.0 + tp_pct / 100.0), 6)
 
                 # dca_positions გახსნა
@@ -807,7 +808,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     symbol=new_sym,
                     initial_entry_price=buy_price,
                     initial_qty=buy_qty,
-                    initial_quote_spent=net_proceeds,
+                    initial_quote_spent=buy_quote,
                     tp_price=tp_price,
                     sl_price=0.0,
                     tp_pct=tp_pct,
