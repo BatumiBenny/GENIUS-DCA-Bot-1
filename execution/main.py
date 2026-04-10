@@ -931,6 +931,71 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             logger.error(f"[CASCADE] ERR | {sym} err={e}")
 
 
+def _start_bot_api_server() -> None:
+    """
+    Bot API Server — Dashboard-ისთვის DB data-ს აბრუნებს.
+    GET /api/stats  → positions + trades + stats JSON
+    GET /health     → liveness check
+
+    ENV:
+      BOT_API_ENABLED=true   ← ჩართვა/გამორთვა (default: true)
+      BOT_API_PORT=5001      ← port (default: 5001)
+    """
+    if not os.getenv("BOT_API_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        return
+
+    try:
+        from flask import Flask as _Flask, jsonify as _jsonify
+    except ImportError:
+        logger.warning("[BOT_API] Flask not installed → API disabled")
+        return
+
+    import threading as _threading
+    from datetime import datetime as _dt, timezone as _tz
+
+    api_app = _Flask("bot_api")
+
+    @api_app.route("/api/stats")
+    def bot_api_stats():
+        try:
+            from execution.db.repository import (
+                get_trade_stats,
+                get_all_open_dca_positions,
+                get_closed_trades,
+            )
+            stats     = get_trade_stats()
+            positions = get_all_open_dca_positions()
+            trades    = get_closed_trades()
+            recent = sorted(
+                [t for t in trades if t.get("outcome")],
+                key=lambda x: str(x.get("closed_at", "")),
+                reverse=True,
+            )[:20]
+            return _jsonify({
+                "stats":         stats,
+                "positions":     positions,
+                "recent_trades": recent,
+                "timestamp":     _dt.now(_tz.utc).isoformat(),
+            })
+        except Exception as e:
+            logger.error(f"[BOT_API] stats error: {e}")
+            return _jsonify({"error": str(e)}), 500
+
+    @api_app.route("/health")
+    def bot_api_health():
+        return _jsonify({"status": "ok", "service": "GENIUS-DCA-Bot"})
+
+    def _run():
+        port = int(os.getenv("BOT_API_PORT", "5001"))
+        logger.info(f"[BOT_API] Starting on port {port} → /api/stats")
+        api_app.run(host="0.0.0.0", port=port, debug=False,
+                    use_reloader=False, threaded=True)
+
+    t = _threading.Thread(target=_run, daemon=True, name="bot_api")
+    t.start()
+    logger.info("[BOT_API] API server thread started")
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 
@@ -947,6 +1012,34 @@ def main():
 
     init_db()
     _bootstrap_state_if_needed()
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
+    # buy_qty bug-ის გამო DB qty > Binance qty → TP გაყიდვა ვერ ხდება
+    # რესტარტზე ავტომატურად ასწორებს
+    # QTY_SYNC_ENABLED=true     ← ჩართვა/გამორთვა
+    # QTY_SYNC_TOLERANCE=0.005  ← 0.5% სხვაობაზე გასწორება
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if os.getenv("QTY_SYNC_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        try:
+            from execution.qty_sync import run_qty_sync
+            _qty_result = run_qty_sync()
+            logger.info(
+                f"QTY_SYNC | checked={_qty_result.get('checked',0)} "
+                f"fixed={_qty_result.get('fixed',0)} "
+                f"skipped={_qty_result.get('skipped',0)}"
+            )
+        except Exception as _qe:
+            logger.warning(f"QTY_SYNC_FAIL | err={_qe}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # BOT API SERVER — Dashboard-ისთვის DB data /api/stats endpoint-ზე
+    # BOT_API_ENABLED=true, BOT_API_PORT=5001
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    try:
+        _start_bot_api_server()
+    except Exception as _ae:
+        logger.warning(f"BOT_API_START_FAIL | err={_ae}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # LIVE DASHBOARD — background thread, port 8080
