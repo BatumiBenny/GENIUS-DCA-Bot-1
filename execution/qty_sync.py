@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import logging
 
@@ -35,7 +36,6 @@ DRY_RUN   = os.getenv("QTY_SYNC_DRY_RUN", "false").strip().lower() in ("1", "tru
 
 def _base_coin(symbol: str) -> str:
     """BTC/USDT → BTC, BTC/USDT_L2 → BTC"""
-    import re
     clean = re.sub(r'_L\d+$', '', symbol)
     return clean.split("/")[0]
 
@@ -53,6 +53,8 @@ def run_qty_sync() -> dict:
         }
     """
     result = {"checked": 0, "fixed": 0, "skipped": 0, "details": []}
+    conn = None
+    ex   = None
 
     try:
         from execution.exchange_client import BinanceSpotClient
@@ -71,21 +73,27 @@ def run_qty_sync() -> dict:
             coin = _base_coin(pos["symbol"])
             coin_db.setdefault(coin, []).append(pos)
 
-        # ── 3. Binance ბალანსი — მხოლოდ საჭირო coin-ები ────
-        # MEMORY FIX: fetch_balance() მთელ ბალანსს კითხულობს → 512MB!
-        # fetch_balance_free(coin) — coin-by-coin → მეხსიერება დაცულია
+        # ── 3. Binance ბალანსი — coin-by-coin (memory safe) ──
+        # FIX #1: ex ობიექტი try/finally-ში — მეხსიერება გათავისუფლდება
+        # fetch_balance_free(coin) — ერთი coin-ი, არა მთელი ბალანსი
         ex = BinanceSpotClient()
         binance_total: dict[str, float] = {}
-        logger.info(f"[QTY_SYNC] Fetching: {list(coin_db.keys())}")
+        logger.info(f"[QTY_SYNC] Fetching balances: {list(coin_db.keys())}")
+
         for coin in coin_db.keys():
             try:
                 free = ex.fetch_balance_free(coin)
                 binance_total[coin] = float(free or 0)
-                logger.info(f"[QTY_SYNC] {coin}={binance_total[coin]:.8f}")
+                logger.info(f"[QTY_SYNC] {coin} balance={binance_total[coin]:.8f}")
             except Exception as _be:
                 logger.warning(f"[QTY_SYNC] {coin} fetch fail: {_be}")
                 binance_total[coin] = 0.0
 
+        # FIX #1: exchange client-ის გათავისუფლება მეხსიერებიდან
+        del ex
+        ex = None
+
+        # FIX #2: conn try/finally-ში — ყოველთვის დაიხურება
         conn = get_connection()
 
         for coin, pos_list in coin_db.items():
@@ -128,9 +136,8 @@ def run_qty_sync() -> dict:
                     detail["action"] = "dry_run"
                     result["skipped"] += 1
                 else:
-                    # ── გასწორება: თუ ერთი პოზიციაა — პირდაპირ
-                    # თუ რამდენიმეა — პროპორციულად
                     if len(pos_list) == 1:
+                        # ── ერთი პოზიცია — პირდაპირ Binance qty-ს ვიყენებთ
                         pos = pos_list[0]
                         old_qty = float(pos.get("total_qty") or 0)
                         new_qty = round(binance_qty, 8)
@@ -151,26 +158,45 @@ def run_qty_sync() -> dict:
                         result["fixed"] += 1
 
                     else:
-                        # რამდენიმე პოზიცია — პროპორციული განაწილება
-                        ratio = binance_qty / db_total_qty if db_total_qty > 0 else 1.0
-                        for pos in pos_list:
-                            old_qty = float(pos.get("total_qty") or 0)
-                            new_qty = round(old_qty * ratio, 8)
-                            conn.execute(
-                                "UPDATE dca_positions SET total_qty=? WHERE id=? AND status='OPEN'",
-                                (new_qty, pos["id"])
-                            )
+                        # FIX #3: რამდენიმე პოზიცია — ცალ-ცალკე Binance balance
+                        # პროპორციული fix არასწორია — BTC და BTC_L2 ცალ-ცალკე ბალანსია
+                        # ამიტომ: DB total vs Binance total-ის ratio გამოვიყენოთ
+                        # მხოლოდ თუ Binance > 0 (არ გავანულოთ!)
+                        if binance_qty <= 0:
                             logger.warning(
-                                f"[QTY_SYNC] FIXED {pos['symbol']} | "
-                                f"qty: {old_qty:.8f} → {new_qty:.8f} (ratio={ratio:.6f})"
+                                f"[QTY_SYNC] {coin} SKIP_MULTI | "
+                                f"binance_qty=0 → საშიშია, skip"
                             )
-                        conn.commit()
-                        detail["action"] = "fixed_proportional"
-                        result["fixed"] += 1
+                            detail["action"] = "skip_zero_binance"
+                            result["skipped"] += 1
+                        else:
+                            ratio = binance_qty / db_total_qty
+                            # safety: ratio > 1.1 ან < 0.5 → skip (უჩვეულო)
+                            if ratio > 1.1 or ratio < 0.5:
+                                logger.warning(
+                                    f"[QTY_SYNC] {coin} SKIP_RATIO | "
+                                    f"ratio={ratio:.4f} — უჩვეულო, manual check საჭიროა"
+                                )
+                                detail["action"] = "skip_unusual_ratio"
+                                result["skipped"] += 1
+                            else:
+                                for pos in pos_list:
+                                    old_qty = float(pos.get("total_qty") or 0)
+                                    new_qty = round(old_qty * ratio, 8)
+                                    conn.execute(
+                                        "UPDATE dca_positions SET total_qty=? WHERE id=? AND status='OPEN'",
+                                        (new_qty, pos["id"])
+                                    )
+                                    logger.warning(
+                                        f"[QTY_SYNC] FIXED {pos['symbol']} | "
+                                        f"qty: {old_qty:.8f} → {new_qty:.8f} "
+                                        f"(ratio={ratio:.6f})"
+                                    )
+                                conn.commit()
+                                detail["action"] = "fixed_proportional"
+                                result["fixed"] += 1
 
             result["details"].append(detail)
-
-        conn.close()
 
         logger.info(
             f"[QTY_SYNC] DONE | "
@@ -182,6 +208,19 @@ def run_qty_sync() -> dict:
     except Exception as e:
         logger.error(f"[QTY_SYNC] ERROR | {e}")
         result["error"] = str(e)
+
+    finally:
+        # FIX #2: conn და ex ყოველთვის გათავისუფლდება
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if ex:
+            try:
+                del ex
+            except Exception:
+                pass
 
     return result
 
