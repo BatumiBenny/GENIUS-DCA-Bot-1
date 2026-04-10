@@ -663,21 +663,21 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
     """
     Cascade DCA — "Rolling Exchange" სტრატეგია.
 
-    ლოგიკა:
-      - სულ გახსნილი Layer-ების რაოდენობა >= CASCADE_START_LAYER (default=7)?
-      - ყოველ symbol-ზე: ყველაზე ძველი Layer გამოვავლინოთ
-      - current_price <= oldest_layer_avg × (1 - CASCADE_DROP_PCT/100)?
-      - Exchange: ძველი Layer დავხუროთ (market sell) → ახალი Layer გავხსნათ
-        გამოთავისუფლებული თანხით (exchange_proceeds)
-      - Layer რაოდენობა >= CASCADE_MAX_LAYERS (default=10)?
-        → გაჩერება, CASCADE_RESUME_LAYER (default=16)-მდე ლოდინი
+    Layer-ის მიხედვით drop_pct და tp_pct იცვლება:
+      L2-L3:  drop=1.5%  tp=0.55%
+      L4-L7:  drop=2.0%  tp=0.65%
+      L8-L10: drop=3.0%  tp=0.65%
+      L10+:   CASCADE_MAX_LAYERS=10 → გაჩერება
 
     ENV:
       CASCADE_ENABLED=true
-      CASCADE_START_LAYER=7       ← მე-7 სვლიდან იწყება
-      CASCADE_DROP_PCT=1.5        ← იგივე Layer2-ის trigger
+      CASCADE_START_LAYER=2       ← L2-დან იწყება
+      CASCADE_DROP_PCT=1.5        ← L2-L3 trigger
+      CASCADE_DROP_L4_PCT=2.0     ← L4-L7 trigger
+      CASCADE_DROP_L8_PCT=3.0     ← L8-L10 trigger
+      CASCADE_TP_L3_PCT=0.65      ← L3+ TP პროცენტი
       CASCADE_MAX_LAYERS=10       ← მე-10-ზე გაჩერება
-      CASCADE_RESUME_LAYER=16     ← მე-16-ზე გახსნა
+      CASCADE_RESUME_LAYER=10     ← dead zone გაუქმება
       CASCADE_SYMBOLS=BTC/USDT,BNB/USDT,ETH/USDT
     """
     import os
@@ -696,13 +696,16 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
         log_event,
     )
 
-    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "7"))
-    drop_pct       = float(os.getenv("CASCADE_DROP_PCT",   "1.5"))
-    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",   "10"))
-    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER", "16"))
+    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "2"))
+    drop_pct_base  = float(os.getenv("CASCADE_DROP_PCT",    "1.5"))  # L2-L3
+    drop_pct_l4    = float(os.getenv("CASCADE_DROP_L4_PCT", "2.0"))  # L4-L7
+    drop_pct_l8    = float(os.getenv("CASCADE_DROP_L8_PCT", "3.0"))  # L8-L10
+    tp_pct_base    = float(os.getenv("DCA_TP_PCT",          "0.55")) # L1-L2
+    tp_pct_l3      = float(os.getenv("CASCADE_TP_L3_PCT",   "0.65")) # L3-L10
+    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",    "10"))
+    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER",  "10"))   # dead zone გაუქმება
     symbols_raw    = os.getenv("CASCADE_SYMBOLS", "BTC/USDT,BNB/USDT,ETH/USDT")
     symbols        = [s.strip() for s in symbols_raw.split(",") if s.strip()]
-    tp_pct         = float(os.getenv("DCA_TP_PCT", "0.55"))
     buffer         = float(os.getenv("SMART_ADDON_BUFFER", "5.0"))
 
     # ყველა ღია პოზიცია
@@ -758,6 +761,30 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             oldest_quote = float(oldest.get("total_quote_spent", 0.0))
             oldest_id    = oldest["id"]
             oldest_sym   = oldest["symbol"]
+
+            # Layer ნომერი განვსაზღვროთ (sym_positions.len = ახლანდელი layer count)
+            layer_num = len(sym_positions)  # მაგ: 2 = L2, 4 = L4...
+
+            # ── Layer-ის მიხედვით drop_pct ─────────────────────────
+            # L2-L3: 1.5%  |  L4-L7: 2.0%  |  L8-L10: 3.0%
+            if layer_num >= 8:
+                drop_pct = drop_pct_l8
+            elif layer_num >= 4:
+                drop_pct = drop_pct_l4
+            else:
+                drop_pct = drop_pct_base
+
+            # ── Layer-ის მიხედვით tp_pct ───────────────────────────
+            # L1-L2: 0.55%  |  L3-L10: 0.65%
+            if layer_num >= 3:
+                tp_pct = tp_pct_l3
+            else:
+                tp_pct = tp_pct_base
+
+            logger.info(
+                f"[CASCADE] {sym} | layer={layer_num} "
+                f"drop_trigger={drop_pct:.1f}% tp={tp_pct:.2f}%"
+            )
 
             if oldest_avg <= 0 or oldest_qty <= 0:
                 continue
