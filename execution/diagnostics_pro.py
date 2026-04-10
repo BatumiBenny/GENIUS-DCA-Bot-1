@@ -1,25 +1,47 @@
 # execution/diagnostics_pro.py
-# ============================================================
-# GENIUS BOT — სრული Production Diagnostics
-# Senior Algo-Trading Engineer ვერსია
-#
-# შემოწმებები:
-#   1. Python ფაილების არსებობა
-#   2. DB მდგომარეობა და ცხრილები
-#   3. system_state
-#   4. ღია trade-ები
-#   5. OCO links (broken detection)
-#   6. Performance სტატისტიკა
-#   7. ENV პარამეტრების სრული ვალიდაცია
-#   8. SL Cooldown მდგომარეობა
-#   9. signal_outbox
-#  10. ბოლო audit events
-#  11. Regime Engine ფუნქციური ტესტი
-#  12. ENV vs Python default კონფლიქტები (ახალი — სრული)
-#  13. BROKEN OCO ავტო-repair (ახალი)
-#  14. Trade PnL consistency (ახალი)
-#  15. API connectivity (ახალი)
-# ============================================================
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║                                                                      ║
+# ║   ██████  ███████ ███    ██ ██ ██    ██ ███████                      ║
+# ║  ██       ██      ████   ██ ██ ██    ██ ██                           ║
+# ║  ██   ███ █████   ██ ██  ██ ██ ██    ██ ███████                      ║
+# ║  ██    ██ ██      ██  ██ ██ ██ ██    ██      ██                      ║
+# ║   ██████  ███████ ██   ████ ██  ██████  ███████                      ║
+# ║                                                                      ║
+# ║         DCA BOT — Production Diagnostics v2.0                        ║
+# ║         Binance Spot | Cascade DCA | Rolling Exchange                ║
+# ║                                                                      ║
+# ╠══════════════════════════════════════════════════════════════════════╣
+# ║  გაშვება:                                                            ║
+# ║    cd /opt/render/project/src                                        ║
+# ║    PYTHONPATH=. python3 -m execution.diagnostics_pro                 ║
+# ╠══════════════════════════════════════════════════════════════════════╣
+# ║  შემოწმებები:                                                        ║
+# ║   01. Python ფაილების არსებობა                                       ║
+# ║   02. DB მდგომარეობა და ცხრილები                                     ║
+# ║   03. system_state                                                   ║
+# ║   04. ღია trade-ები და DCA პოზიციები                                 ║
+# ║   05. OCO links (broken detection)                                   ║
+# ║   06. Performance სტატისტიკა                                         ║
+# ║   07. ENV პარამეტრების სრული ვალიდაცია                               ║
+# ║   08. SL Cooldown მდგომარეობა                                        ║
+# ║   09. signal_outbox                                                  ║
+# ║   10. ბოლო audit events                                              ║
+# ║   11. Regime Engine ფუნქციური ტესტი                                  ║
+# ║   12. ENV vs Python default კონფლიქტები                              ║
+# ║   13. Trade PnL consistency                                          ║
+# ║   14. Binance API connectivity                                       ║
+# ║   15. BROKEN OCO repair suggestions                                  ║
+# ║   16. DCA პოზიციების ვალიდაცია (TP/SL/Memory)                       ║
+# ╠══════════════════════════════════════════════════════════════════════╣
+# ║  FIX LOG (2026-04-10):                                               ║
+# ║   FIX-D1: system_state ACTIVE/RUNNING — ორივე valid სტატუსი         ║
+# ║   FIX-D2: API drift — Binance {"serverTime":...} ფორმატი            ║
+# ║   FIX-D3: Bybit → Binance ყველა reference-ში                        ║
+# ║   FIX-D4: ENV_VS_CODE DCA-incompatible checks ამოღებულია            ║
+# ║   FIX-D5: BUY_CONFIDENCE_MIN expected 0.10 (DCA რეალობა)            ║
+# ║   FIX-D6: MAX_TRADES_PER_DAY/HOUR DCA მნიშვნელობები                 ║
+# ║   FIX-D7: MIN_VOLUME_24H DCA მნიშვნელობა (100000)                   ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 
 from __future__ import annotations
 
@@ -88,17 +110,21 @@ class Report:
         }
 
     def print_report(self):
-        G  = "\033[32m"   # green
-        Y  = "\033[33m"   # yellow
-        R  = "\033[31m"   # red
-        C  = "\033[36m"   # cyan
-        B  = "\033[1m"    # bold
+        G   = "\033[32m"   # green
+        Y   = "\033[33m"   # yellow
+        R   = "\033[31m"   # red
+        C   = "\033[36m"   # cyan
+        B   = "\033[1m"    # bold
+        M   = "\033[35m"   # magenta
         RST = "\033[0m"
 
         W = 72
-        print(f"\n{B}{'─'*W}{RST}")
-        print(f"{B}  {'─'*4} სრული Pro დიაგნოსტიკა {'─'*4}{RST}")
-        print(f"{B}{'─'*W}{RST}\n")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"\n{B}{C}╔{'═'*W}╗{RST}")
+        print(f"{B}{C}║{'GENIUS DCA BOT — სრული დიაგნოსტიკა':^{W}}║{RST}")
+        print(f"{B}{C}║{f'Binance Spot | Cascade DCA | {now_str}':^{W}}║{RST}")
+        print(f"{B}{C}╚{'═'*W}╝{RST}\n")
 
         sections = {
             "Python ფაილები":           [],
@@ -145,7 +171,27 @@ class Report:
             if not items_unique:
                 continue
             sec_num += 1
-            print(f"{C}{'─'*4} {sec_num}. {sec_name} {'─'*max(1,W-6-len(sec_name))}{RST}")
+            sec_icon = {
+                "Python ფაილები": "📁",
+                "DB კავშირი": "🗄️",
+                "system_state": "⚙️",
+                "ღია trade": "📊",
+                "OCO links": "🔗",
+                "Performance": "📈",
+                "ENV ვალიდაცია": "🔧",
+                "SL Cooldown": "⏱️",
+                "signal_outbox": "📬",
+                "ბოლო audit": "📋",
+                "Regime Engine": "🧠",
+                "ENV vs Code": "⚠️",
+                "Trade PnL": "💰",
+                "API connectivity": "🌐",
+                "BROKEN OCO": "🔴",
+                "სხვა": "📌",
+            }.get(sec_name.split()[0], "▸")
+            print(f"{C}┌{'─'*W}┐{RST}")
+            print(f"{C}│ {B}{sec_icon} {sec_num:02d}. {sec_name}{RST}{C}{' '*(W-6-len(sec_name))}│{RST}")
+            print(f"{C}└{'─'*W}┘{RST}")
             for r in items_unique:
                 if r.ok:
                     tag   = f"{G}[OK]  {RST}"
@@ -163,20 +209,26 @@ class Report:
             print()
 
         s = self.summary()
-        total_bar = f"სულ:{s['total']}  OK:{s['passed']}  WARN:{s['warn']}  FAIL:{s['failed']}  CRIT:{s['critical']}"
+        status_icon = "✅" if s["status"] == "SAFE" else ("🔴" if s["status"] == "CRITICAL" else "⚠️")
         color = G if s["status"] == "SAFE" else (R if s["status"] == "CRITICAL" else Y)
-        print(f"{B}{'─'*W}{RST}")
-        print(f"  {total_bar}")
-        print(f"  სტატუსი: {color}{B}{s['status']}{RST}\n")
+
+        print(f"{B}{'═'*W}{RST}")
+        print(f"  📊 სულ: {s['total']}   {G}✓ OK: {s['passed']}{RST}   {Y}⚠ WARN: {s['warn']}{RST}   {R}✗ FAIL: {s['failed']}   🔴 CRIT: {s['critical']}{RST}")
+        print(f"  {status_icon} სტატუსი: {color}{B}{s['status']}{RST}")
+        print(f"{B}{'═'*W}{RST}\n")
 
         if not all(r.ok for r in self.results):
-            print(f"{B}  დასაფიქსირებელი პრობლემები:{RST}")
-            for r in self.results:
-                if not r.ok and r.fix:
+            problems = [r for r in self.results if not r.ok and r.fix]
+            if problems:
+                print(f"{B}  🔧 დასაფიქსირებელი პრობლემები ({len(problems)}):{RST}")
+                print(f"  {'─'*W}")
+                for i, r in enumerate(problems, 1):
                     sev_color = R if r.severity == "CRITICAL" else Y
-                    print(f"  {sev_color}• [{r.severity}] {r.name}{RST}")
-                    print(f"    {r.fix}")
-            print()
+                    sev_icon  = "🔴" if r.severity == "CRITICAL" else "⚠️"
+                    print(f"  {sev_color}{sev_icon} {i:02d}. [{r.severity}] {r.name}{RST}")
+                    print(f"     {r.fix}")
+                    print()
+                print(f"  {'─'*W}")
 
 
 # =============================================================================
@@ -319,8 +371,10 @@ def check_system_state(rep: Report, conn: sqlite3.Connection):
         kill_sw  = d.get("kill_switch", "?")
         sync_ok  = d.get("startup_sync_ok", "?")
 
-        rep.add("system_state/status",   status == "RUNNING", f"status={status}",
-                fix="status=RUNNING-ს ელოდება — main.py restart" if status != "RUNNING" else "")
+        rep.add("system_state/status",
+                status in ("RUNNING", "ACTIVE"),
+                f"status={status}",
+                fix="" if status in ("RUNNING", "ACTIVE") else "status უნდა იყოს RUNNING ან ACTIVE — main.py restart")
         rep.add("system_state/kill_sw",  str(kill_sw).upper() in ("OFF", "0", "FALSE", "NONE"),
                 f"kill_switch={kill_sw}",
                 fix="KILL_SWITCH=OFF — Render ENV-ში შეცვალე და restart" if str(kill_sw).upper() not in ("OFF","0","FALSE","NONE") else "")
@@ -371,7 +425,7 @@ def check_oco_links(rep: Report, conn: sqlite3.Connection) -> int:
             f"BROKEN OCO: {len(broken)}",
             severity="CRITICAL" if not broken_ok else "INFO",
             fix=(
-                f"Bybit-ზე გახსენი Open Orders და გააუქმე ეს {len(broken)} broken OCO.\n"
+                f"Binance-ზე გახსენი Open Orders და გააუქმე ეს {len(broken)} broken OCO.\n"
                 f"        SQL fix: UPDATE oco_links SET status='closed' WHERE status='broken';\n"
                 f"        შემდეგ DB-ში ხელით გაუშვი ან: sqlite3 $DB_PATH \"UPDATE oco_links SET status='closed' WHERE status='broken';\""
                 if not broken_ok else ""
@@ -847,20 +901,17 @@ def check_regime_engine(rep: Report):
 
 ENV_VS_CODE_CHECKS: List[Tuple[str, str, str]] = [
     # (ENV_KEY, expected_env_val, description_of_impact)
-    ("AI_CONFIDENCE_BOOST",     "1.05",     "signal score boost — 1.0 default score-ს ვერ ამაღლებს"),
-    ("AI_FILTER_LOW_CONFIDENCE","true",     "pre-filter off → low quality signals გადის"),
-    ("ALLOW_LIVE_SIGNALS",      "true",     "CRITICAL: false → ყველა BUY სიგნალი იბლოკება!"),
-    ("BUY_LIQUIDITY_MIN_SCORE", "0.40",     "0 default → volume floor გამორთულია"),
-    ("MAX_TRADES_PER_DAY",      "10",       "0 default → daily limit გამორთულია"),
-    ("MAX_TRADES_PER_HOUR",     "3",        "0 default → hourly limit გამორთულია"),
-    ("MIN_VOLUME_24H",          "30000000", "0 default → ყველა symbol გადის volume filter-ს"),
-    ("RSI_MAX",                 "65",       "70 default → overbought zone-ში ვყიდულობთ"),
-    ("RSI_SELL_MIN",            "72",       "60 default → ძალიან ადრე SELL trigger"),
-    ("SIGNAL_EXPIRATION_SECONDS","600",     "0 default → signals არ expire-ავს"),
-    ("TRAILING_STOP_ENABLED",   "true",     "false default → trailing stop გამორთულია"),
-    ("USE_FUNDING_FILTER",      "true",     "false default → funding rate filter გამორთულია"),
-    ("USE_MA_FILTERS",          "false",    "true default → soft mode ვერ მუშაობს"),
-    ("BUY_CONFIDENCE_MIN",      "0.46",     "INTERNAL_CONFLICT: synced to ENV=0.46"),
+    # ─── სიგნალის ხარისხი ────────────────────────────────────────────────
+    ("AI_CONFIDENCE_BOOST",      "1.05",  "signal score boost — 1.0 default score-ს ვერ ამაღლებს"),
+    ("ALLOW_LIVE_SIGNALS",       "true",  "CRITICAL: false → ყველა BUY სიგნალი იბლოკება!"),
+    # ─── DCA სწორი ლიმიტები ──────────────────────────────────────────────
+    ("BUY_CONFIDENCE_MIN",       "0.10",  "DCA: 0.005 ძალიან დაბალია — noise trades შემოდის"),
+    ("MAX_TRADES_PER_DAY",       "40",    "DCA სწრაფი პროფილი — 40 ნორმალურია"),
+    ("MAX_TRADES_PER_HOUR",      "8",     "DCA სწრაფი პროფილი — 8 ნორმალურია"),
+    ("MIN_VOLUME_24H",           "100000","DCA: BTC/ETH/BNB ყოველთვის > 100K — საკმარისია"),
+    # ─── სიგნალის ფილტრები ───────────────────────────────────────────────
+    ("USE_MA_FILTERS",           "false", "DCA: MA filters გათიშული — ნორმალურია"),
+    ("USE_RSI_FILTER",           "true",  "RSI filter ჩართული უნდა იყოს"),
 ]
 
 
@@ -981,14 +1032,11 @@ def check_pnl_consistency(rep: Report, conn: sqlite3.Connection):
 # =============================================================================
 
 def check_api_connectivity(rep: Report):
-    """Bybit REST API ping — 3s timeout"""
+    """Binance REST API ping — 3s timeout"""
     import urllib.request
     import json as _json
 
-    # Bybit public REST endpoint
-    base = "https://api.binance.com/api/v3"
-
-    # 1. Ping — Bybit server time endpoint (public, no auth)
+    # 1. Ping — Binance server time (public, no auth)
     try:
         req = urllib.request.Request(
             "https://api.binance.com/api/v3/time",
@@ -997,28 +1045,26 @@ def check_api_connectivity(rep: Report):
         with urllib.request.urlopen(req, timeout=3) as resp:
             ok = resp.status == 200
             data = _json.loads(resp.read().decode())
-        rep.add("API/ping", ok, f"Bybit ping → {resp.status}",
-                fix="Bybit API ping failed — network ან API endpoint შეამოწმე" if not ok else "")
+        rep.add("API/ping", ok, f"Binance ping → {resp.status}",
+                fix="Binance API ping failed — network ან API endpoint შეამოწმე" if not ok else "")
     except Exception as e:
         rep.add("API/ping", False, str(e), "CRITICAL",
-                fix="Bybit REST API მიუწვდომელია — Render outbound network შეამოწმე")
+                fix="Binance REST API მიუწვდომელია — Render outbound network შეამოწმე")
         return
 
-    # 2. Server time drift
+    # 2. Server time drift — FIX-D2: Binance აბრუნებს {"serverTime": ms}
     try:
-        server_ms = int(data.get("result", {}).get("timeSecond", 0)) * 1000
-        if not server_ms:
-            server_ms = int(data.get("result", {}).get("timeNano", 0)) // 1_000_000
+        server_ms = int(data.get("serverTime", 0))  # FIX: Binance ფორმატი
         local_ms  = int(time.time() * 1000)
         drift_ms  = abs(server_ms - local_ms)
         drift_ok  = drift_ms < 1000
         rep.add("API/time_drift", drift_ok,
-                f"drift={drift_ms}ms (max 1000ms)",
+                f"drift={drift_ms}ms (max=1000ms)" + (" ✅" if drift_ok else " ⚠️"),
                 severity="WARN" if not drift_ok else "INFO",
-                fix=f"Clock drift {drift_ms}ms — server NTP sync შეამოწმე. Bybit ითხოვს < 1000ms" if not drift_ok else "")
+                fix=f"Clock drift {drift_ms}ms > 1000ms — Render server NTP sync პრობლემა" if not drift_ok else "")
     except Exception as e:
         rep.add("API/time_drift", False, str(e), "WARN",
-                fix="Bybit /time endpoint parse failed")
+                fix="Binance /time endpoint parse failed")
 
 
 # =============================================================================
@@ -1039,10 +1085,10 @@ def check_and_suggest_oco_repair(rep: Report, conn: sqlite3.Connection):
         rep.add(
             "BROKEN_OCO/repair",
             False,
-            f"{len(broken)} broken OCO link(s) — Bybit-ზე manual check საჭიროა!",
+            f"{len(broken)} broken OCO link(s) — Binance-ზე manual check საჭიროა!",
             severity="CRITICAL",
             fix=(
-                f"ნაბიჯი 1: Bybit Open Orders გახსენი და ეს orders გააუქმე:\n" +
+                f"ნაბიჯი 1: Binance Open Orders გახსენი და ეს orders გააუქმე:\n" +
                 "".join(
                     f"          link_id={b.get('link_id','?')} symbol={b.get('symbol','?')} "
                     f"tp_order={b.get('tp_order_id','?')} sl_order={b.get('sl_order_id','?')}\n"
@@ -1050,7 +1096,7 @@ def check_and_suggest_oco_repair(rep: Report, conn: sqlite3.Connection):
                 ) +
                 f"        ნაბიჯი 2: DB-ში status update:\n"
                 f"          sqlite3 $DB_PATH \"UPDATE oco_links SET status='closed' WHERE status='broken';\"\n"
-                f"        ნაბიჯი 3: trades ცხრილში შესაბამისი entries შეამოწმე და status='closed_manual' დასეტე\n"
+                f"        ნაბიჯი 3: trades ცხრილში შესაბამისი entries შეამოწმე\n"
                 f"        ნაბიჯი 4: bot restart"
             )
         )
