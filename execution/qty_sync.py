@@ -59,32 +59,38 @@ def run_qty_sync() -> dict:
         from execution.db.repository import get_all_open_dca_positions
         from execution.db.db import get_connection
 
-        # ── 1. Binance ბალანსი ──────────────────────────────
-        logger.info("[QTY_SYNC] Fetching Binance balances...")
-        ex = BinanceSpotClient()
-        bal = ex.exchange.fetch_balance()
-        binance_free  = bal.get("free",  {})
-        binance_total = bal.get("total", {})
-
-        # ── 2. ღია პოზიციები DB-დან ─────────────────────────
+        # ── 1. ღია პოზიციები DB-დან ─────────────────────────
         positions = get_all_open_dca_positions()
         if not positions:
             logger.info("[QTY_SYNC] No open positions → skip")
             return result
 
-        # ── 3. coin-ების აგრეგაცია DB-დან ───────────────────
-        # ერთი coin-ი შეიძლება რამდენიმე პოზიციაში იყოს
-        # (BTC/USDT + BTC/USDT_L2 + BTC/USDT_L3...)
+        # ── 2. coin-ების აგრეგაცია DB-დან ───────────────────
         coin_db: dict[str, list] = {}
         for pos in positions:
             coin = _base_coin(pos["symbol"])
             coin_db.setdefault(coin, []).append(pos)
 
+        # ── 3. Binance ბალანსი — მხოლოდ საჭირო coin-ები ────
+        # MEMORY FIX: fetch_balance() მთელ ბალანსს კითხულობს → 512MB!
+        # fetch_balance_free(coin) — coin-by-coin → მეხსიერება დაცულია
+        ex = BinanceSpotClient()
+        binance_total: dict[str, float] = {}
+        logger.info(f"[QTY_SYNC] Fetching: {list(coin_db.keys())}")
+        for coin in coin_db.keys():
+            try:
+                free = ex.fetch_balance_free(coin)
+                binance_total[coin] = float(free or 0)
+                logger.info(f"[QTY_SYNC] {coin}={binance_total[coin]:.8f}")
+            except Exception as _be:
+                logger.warning(f"[QTY_SYNC] {coin} fetch fail: {_be}")
+                binance_total[coin] = 0.0
+
         conn = get_connection()
 
         for coin, pos_list in coin_db.items():
             db_total_qty = sum(float(p.get("total_qty") or 0) for p in pos_list)
-            binance_qty  = float(binance_total.get(coin, 0))
+            binance_qty  = binance_total.get(coin, 0.0)
 
             if db_total_qty <= 0:
                 continue
