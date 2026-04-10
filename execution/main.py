@@ -1016,21 +1016,38 @@ def main():
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
     # buy_qty bug-ის გამო DB qty > Binance qty → TP გაყიდვა ვერ ხდება
-    # რესტარტზე ავტომატურად ასწორებს
+    # 20s delay — main loop DB init-ის შემდეგ გაეშვება (DB conflict თავიდანაცილება)
     # QTY_SYNC_ENABLED=true     ← ჩართვა/გამორთვა
     # QTY_SYNC_TOLERANCE=0.005  ← 0.5% სხვაობაზე გასწორება
+    # QTY_SYNC_DELAY=20         ← delay წამებში (default: 20)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if os.getenv("QTY_SYNC_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
         try:
-            from execution.qty_sync import run_qty_sync
-            _qty_result = run_qty_sync()
-            logger.info(
-                f"QTY_SYNC | checked={_qty_result.get('checked',0)} "
-                f"fixed={_qty_result.get('fixed',0)} "
-                f"skipped={_qty_result.get('skipped',0)}"
-            )
+            import threading as _qty_thread
+
+            def _run_qty_sync_delayed():
+                import time as _t
+                _delay = int(os.getenv("QTY_SYNC_DELAY", "20"))
+                _t.sleep(_delay)
+                try:
+                    from execution.qty_sync import run_qty_sync
+                    _r = run_qty_sync()
+                    logger.info(
+                        f"QTY_SYNC | checked={_r.get('checked',0)} "
+                        f"fixed={_r.get('fixed',0)} "
+                        f"skipped={_r.get('skipped',0)}"
+                    )
+                except Exception as _qe2:
+                    logger.warning(f"QTY_SYNC_FAIL | err={_qe2}")
+
+            _qty_thread.Thread(
+                target=_run_qty_sync_delayed,
+                daemon=True,
+                name="qty_sync"
+            ).start()
+            logger.info("QTY_SYNC | scheduled in 20s (background thread)")
         except Exception as _qe:
-            logger.warning(f"QTY_SYNC_FAIL | err={_qe}")
+            logger.warning(f"QTY_SYNC_THREAD_FAIL | err={_qe}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # BOT API SERVER — Dashboard-ისთვის DB data /api/stats endpoint-ზე
