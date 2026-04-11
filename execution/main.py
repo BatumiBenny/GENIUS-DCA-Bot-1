@@ -861,6 +861,21 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     f"proceeds={net_proceeds:.4f} pnl={pnl_quote:+.4f}"
                 )
 
+                # ── Telegram — CASCADE გაყიდვის შეტყობინება ──────────
+                try:
+                    notify_dca_closed(
+                        symbol=oldest_sym,
+                        entry_price=oldest_avg,
+                        exit_price=sell_price,
+                        pnl_quote=pnl_quote,
+                        pnl_pct=pnl_pct,
+                        outcome="CASCADE_SELL",
+                        add_on_count=0,
+                        stats=None,
+                    )
+                except Exception as _tg_sell:
+                    logger.warning(f"[CASCADE] TG_SELL_FAIL | err={_tg_sell}")
+
             except Exception as _se:
                 logger.error(f"[CASCADE] SELL_FAIL | {oldest_sym} err={_se}")
                 continue
