@@ -1056,6 +1056,24 @@ def main():
     _bootstrap_state_if_needed()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # TP FIX — Take Profit ავტომატური გასწორება (memory-safe!)
+    # Binance API არ სჭირდება — მხოლოდ DB-ს კითხულობს
+    # L1-L2: TP=avg×1.0055  |  L3-L10: TP=avg×1.0065
+    # TP_FIX_ENABLED=true  ← ჩართვა/გამორთვა (default: true)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if os.getenv("TP_FIX_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        try:
+            from execution.tp_fix import run_tp_fix
+            _tp_result = run_tp_fix()
+            logger.info(
+                f"TP_FIX | checked={_tp_result.get('checked',0)} "
+                f"fixed={_tp_result.get('fixed',0)} "
+                f"skipped={_tp_result.get('skipped',0)}"
+            )
+        except Exception as _tpe:
+            logger.warning(f"TP_FIX_FAIL | err={_tpe}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
     # buy_qty bug-ის გამო DB qty > Binance qty → TP გაყიდვა ვერ ხდება
     # 20s delay — main loop DB init-ის შემდეგ გაეშვება (DB conflict თავიდანაცილება)
