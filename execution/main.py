@@ -663,21 +663,21 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
     """
     Cascade DCA — "Rolling Exchange" სტრატეგია.
 
-    Layer-ის მიხედვით drop_pct და tp_pct იცვლება:
-      L2-L3:  drop=1.5%  tp=0.55%
-      L4-L7:  drop=2.0%  tp=0.65%
-      L8-L10: drop=3.0%  tp=0.65%
-      L10+:   CASCADE_MAX_LAYERS=10 → გაჩერება
+    ლოგიკა:
+      - სულ გახსნილი Layer-ების რაოდენობა >= CASCADE_START_LAYER (default=7)?
+      - ყოველ symbol-ზე: ყველაზე ძველი Layer გამოვავლინოთ
+      - current_price <= oldest_layer_avg × (1 - CASCADE_DROP_PCT/100)?
+      - Exchange: ძველი Layer დავხუროთ (market sell) → ახალი Layer გავხსნათ
+        გამოთავისუფლებული თანხით (exchange_proceeds)
+      - Layer რაოდენობა >= CASCADE_MAX_LAYERS (default=10)?
+        → გაჩერება, CASCADE_RESUME_LAYER (default=16)-მდე ლოდინი
 
     ENV:
       CASCADE_ENABLED=true
-      CASCADE_START_LAYER=2       ← L2-დან იწყება
-      CASCADE_DROP_PCT=1.5        ← L2-L3 trigger
-      CASCADE_DROP_L4_PCT=2.0     ← L4-L7 trigger
-      CASCADE_DROP_L8_PCT=3.0     ← L8-L10 trigger
-      CASCADE_TP_L3_PCT=0.65      ← L3+ TP პროცენტი
+      CASCADE_START_LAYER=7       ← მე-7 სვლიდან იწყება
+      CASCADE_DROP_PCT=1.5        ← იგივე Layer2-ის trigger
       CASCADE_MAX_LAYERS=10       ← მე-10-ზე გაჩერება
-      CASCADE_RESUME_LAYER=10     ← dead zone გაუქმება
+      CASCADE_RESUME_LAYER=16     ← მე-16-ზე გახსნა
       CASCADE_SYMBOLS=BTC/USDT,BNB/USDT,ETH/USDT
     """
     import os
@@ -696,16 +696,13 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
         log_event,
     )
 
-    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "2"))
-    drop_pct_base  = float(os.getenv("CASCADE_DROP_PCT",    "1.5"))  # L2-L3
-    drop_pct_l4    = float(os.getenv("CASCADE_DROP_L4_PCT", "2.0"))  # L4-L7
-    drop_pct_l8    = float(os.getenv("CASCADE_DROP_L8_PCT", "3.0"))  # L8-L10
-    tp_pct_base    = float(os.getenv("DCA_TP_PCT",          "0.55")) # L1-L2
-    tp_pct_l3      = float(os.getenv("CASCADE_TP_L3_PCT",   "0.65")) # L3-L10
-    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",    "10"))
-    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER",  "10"))   # dead zone გაუქმება
+    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "7"))
+    drop_pct       = float(os.getenv("CASCADE_DROP_PCT",   "1.5"))
+    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",   "10"))
+    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER", "16"))
     symbols_raw    = os.getenv("CASCADE_SYMBOLS", "BTC/USDT,BNB/USDT,ETH/USDT")
     symbols        = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+    tp_pct         = float(os.getenv("DCA_TP_PCT", "0.55"))
     buffer         = float(os.getenv("SMART_ADDON_BUFFER", "5.0"))
 
     # ყველა ღია პოზიცია
@@ -761,30 +758,6 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             oldest_quote = float(oldest.get("total_quote_spent", 0.0))
             oldest_id    = oldest["id"]
             oldest_sym   = oldest["symbol"]
-
-            # Layer ნომერი განვსაზღვროთ (sym_positions.len = ახლანდელი layer count)
-            layer_num = len(sym_positions)  # მაგ: 2 = L2, 4 = L4...
-
-            # ── Layer-ის მიხედვით drop_pct ─────────────────────────
-            # L2-L3: 1.5%  |  L4-L7: 2.0%  |  L8-L10: 3.0%
-            if layer_num >= 8:
-                drop_pct = drop_pct_l8
-            elif layer_num >= 4:
-                drop_pct = drop_pct_l4
-            else:
-                drop_pct = drop_pct_base
-
-            # ── Layer-ის მიხედვით tp_pct ───────────────────────────
-            # L1-L2: 0.55%  |  L3-L10: 0.65%
-            if layer_num >= 3:
-                tp_pct = tp_pct_l3
-            else:
-                tp_pct = tp_pct_base
-
-            logger.info(
-                f"[CASCADE] {sym} | layer={layer_num} "
-                f"drop_trigger={drop_pct:.1f}% tp={tp_pct:.2f}%"
-            )
 
             if oldest_avg <= 0 or oldest_qty <= 0:
                 continue
@@ -860,21 +833,6 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     f"[CASCADE] SOLD | {oldest_sym} price={sell_price:.4f} "
                     f"proceeds={net_proceeds:.4f} pnl={pnl_quote:+.4f}"
                 )
-
-                # ── Telegram — CASCADE გაყიდვის შეტყობინება ──────────
-                try:
-                    notify_dca_closed(
-                        symbol=oldest_sym,
-                        entry_price=oldest_avg,
-                        exit_price=sell_price,
-                        pnl_quote=pnl_quote,
-                        pnl_pct=pnl_pct,
-                        outcome="CASCADE_SELL",
-                        add_on_count=0,
-                        stats=None,
-                    )
-                except Exception as _tg_sell:
-                    logger.warning(f"[CASCADE] TG_SELL_FAIL | err={_tg_sell}")
 
             except Exception as _se:
                 logger.error(f"[CASCADE] SELL_FAIL | {oldest_sym} err={_se}")
@@ -1056,74 +1014,23 @@ def main():
     _bootstrap_state_if_needed()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # TP FIX — Take Profit ავტომატური გასწორება (memory-safe!)
-    # Binance API არ სჭირდება — მხოლოდ DB-ს კითხულობს
-    # L1-L2: TP=avg×1.0055  |  L3-L10: TP=avg×1.0065
-    # 10s delay — kill_switch DB conflict-ის თავიდანაცილება
-    # TP_FIX_ENABLED=true  ← ჩართვა/გამორთვა (default: true)
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    if os.getenv("TP_FIX_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
-        try:
-            import threading as _tp_thread
-            import time as _tp_time
-
-            def _run_tp_fix_delayed():
-                _tp_time.sleep(10)
-                try:
-                    from execution.tp_fix import run_tp_fix
-                    _r = run_tp_fix()
-                    logger.info(
-                        f"TP_FIX | checked={_r.get('checked',0)} "
-                        f"fixed={_r.get('fixed',0)} "
-                        f"skipped={_r.get('skipped',0)}"
-                    )
-                except Exception as _tpe2:
-                    logger.warning(f"TP_FIX_FAIL | err={_tpe2}")
-
-            _tp_thread.Thread(
-                target=_run_tp_fix_delayed,
-                daemon=True,
-                name="tp_fix"
-            ).start()
-            logger.info("TP_FIX | scheduled in 10s (background thread)")
-        except Exception as _tpe:
-            logger.warning(f"TP_FIX_THREAD_FAIL | err={_tpe}")
-
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
     # buy_qty bug-ის გამო DB qty > Binance qty → TP გაყიდვა ვერ ხდება
-    # 20s delay — main loop DB init-ის შემდეგ გაეშვება (DB conflict თავიდანაცილება)
+    # რესტარტზე ავტომატურად ასწორებს
     # QTY_SYNC_ENABLED=true     ← ჩართვა/გამორთვა
     # QTY_SYNC_TOLERANCE=0.005  ← 0.5% სხვაობაზე გასწორება
-    # QTY_SYNC_DELAY=20         ← delay წამებში (default: 20)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if os.getenv("QTY_SYNC_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
         try:
-            import threading as _qty_thread
-
-            def _run_qty_sync_delayed():
-                import time as _t
-                _delay = int(os.getenv("QTY_SYNC_DELAY", "20"))
-                _t.sleep(_delay)
-                try:
-                    from execution.qty_sync import run_qty_sync
-                    _r = run_qty_sync()
-                    logger.info(
-                        f"QTY_SYNC | checked={_r.get('checked',0)} "
-                        f"fixed={_r.get('fixed',0)} "
-                        f"skipped={_r.get('skipped',0)}"
-                    )
-                except Exception as _qe2:
-                    logger.warning(f"QTY_SYNC_FAIL | err={_qe2}")
-
-            _qty_thread.Thread(
-                target=_run_qty_sync_delayed,
-                daemon=True,
-                name="qty_sync"
-            ).start()
-            logger.info("QTY_SYNC | scheduled in 20s (background thread)")
+            from execution.qty_sync import run_qty_sync
+            _qty_result = run_qty_sync()
+            logger.info(
+                f"QTY_SYNC | checked={_qty_result.get('checked',0)} "
+                f"fixed={_qty_result.get('fixed',0)} "
+                f"skipped={_qty_result.get('skipped',0)}"
+            )
         except Exception as _qe:
-            logger.warning(f"QTY_SYNC_THREAD_FAIL | err={_qe}")
+            logger.warning(f"QTY_SYNC_FAIL | err={_qe}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # BOT API SERVER — Dashboard-ისთვის DB data /api/stats endpoint-ზე
