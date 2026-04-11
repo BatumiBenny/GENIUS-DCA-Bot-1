@@ -4,6 +4,33 @@ import logging
 from typing import Optional, Dict, Any
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GENIUS-DCA-Bot — main.py
+# CHANGELOG (2026-04-10):
+#
+# FIX #1 — buy_qty slippage correction (3 ადგილი)
+#   პრობლემა: buy_qty = quote / buy_price  → slippage იგნორირებული
+#   გამოსწორება: buy.get("filled") → Binance-ის რეალური filled qty
+#   ადგილები: LAYER2 (სტრ.555), ADD-ON (სტრ.382), CASCADE (სტრ.829)
+#
+# FIX #2 — TP/SL/FC trades lookup Layer სიმბოლოებისთვის
+#   პრობლემა: get_open_trade_for_symbol(exchange_sym) — DB-ში "BTC/USDT_L2"
+#             ინახება, exchange_sym="BTC/USDT" → trade ვერ იპოვებოდა
+#   გამოსწორება: sym პირველი (DB tag), exchange_sym fallback
+#   ადგილები: TP close, FORCE_CLOSE, SL close (სტრ.219, 265, 315)
+#
+# FIX #3 — CASCADE symbol suffix regex
+#   პრობლემა: .replace("_L10","") — _L11, _L12+ არ იფარებოდა
+#   გამოსწორება: re.sub(r'_L\d+$', '', ...) — ყველა suffix იფარება
+#   ადგილი: _check_cascade_exchange (სტრ.718-722)
+#
+# FIX #4 — ADD-ON exchange_sym
+#   პრობლემა: place_market_buy_by_quote(sym) — sym="BTC/USDT_L2"
+#             Binance არ იცნობს "_L2" suffix-ს
+#   გამოსწორება: exchange_sym გამოიყენება (suffix გარეშე)
+#   ადგილი: _run_dca_loop add-on (სტრ.379)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ENV LOADING — python-dotenv
 # override=False → Render ENV პრიორიტეტულია .env-ზე
 # ე.ი. Render-ზე დაყენებული ცვლადი ყოველთვის იმარჯვებს
@@ -154,7 +181,6 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
     """
     from execution.db.repository import (
         get_all_open_dca_positions,
-        get_all_open_trades,
         close_dca_position,
         update_dca_position_after_addon,
         update_dca_sl_price,
@@ -171,10 +197,12 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
         sym = pos["symbol"]
         pos_id = pos["id"]
 
-        # Layer 2 symbol — "_L2" suffix ამოვიღოთ exchange call-ებისთვის
-        # DB-ში "BTC/USDT_L2" ინახება, Binance-ს "BTC/USDT" სჭირდება
-        exchange_sym = sym.replace("_L2", "") if sym.endswith("_L2") else sym
-        is_layer2 = sym.endswith("_L2")
+        # FIX #2 + #4: exchange_sym — ყველა Layer suffix ამოვიღოთ
+        # DB-ში "BTC/USDT_L2", "BTC/USDT_L3"... ინახება
+        # Binance-ს მხოლოდ "BTC/USDT" სჭირდება
+        import re as _re_sym
+        exchange_sym = _re_sym.sub(r'_L\d+$', '', sym)
+        is_layer2 = sym != exchange_sym  # True თუ რაიმე suffix აქვს
 
         try:
             # current price
@@ -214,8 +242,11 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                     # ── dca_positions დახურვა ──────────────────────────
                     close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "TP")
 
-                    # ── FIX: trades ცხრილის დახურვა ───────────────────
-                    _open_tr = get_open_trade_for_symbol(exchange_sym)
+                    # ── FIX #2: trades ცხრილის დახურვა ────────────────
+                    # sym პირველი (DB-ში "BTC/USDT_L2"), exchange_sym fallback
+                    _open_tr = get_open_trade_for_symbol(sym)
+                    if not _open_tr:
+                        _open_tr = get_open_trade_for_symbol(exchange_sym)
                     if _open_tr:
                         close_trade(_open_tr[0], exit_price, "TP", pnl_quote, pnl_pct)
                         logger.info(f"[DCA] TRADE_CLOSED_TP | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
@@ -257,8 +288,11 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
 
                     close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "FORCE_CLOSE")
 
-                    # ── FIX: trades ცხრილის დახურვა ───────────────────
-                    _open_tr = get_open_trade_for_symbol(exchange_sym)
+                    # ── FIX #2: trades ცხრილის დახურვა ────────────────
+                    # sym პირველი (DB-ში "BTC/USDT_L2"), exchange_sym fallback
+                    _open_tr = get_open_trade_for_symbol(sym)
+                    if not _open_tr:
+                        _open_tr = get_open_trade_for_symbol(exchange_sym)
                     if _open_tr:
                         close_trade(_open_tr[0], exit_price, "FORCE_CLOSE", pnl_quote, pnl_pct)
                         logger.info(f"[DCA] TRADE_CLOSED_FC | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
@@ -304,8 +338,11 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
 
                         close_dca_position(pos_id, exit_price, total_qty, pnl_quote, pnl_pct, "SL")
 
-                        # ── FIX: trades ცხრილის დახურვა ───────────────
-                        _open_tr = get_open_trade_for_symbol(exchange_sym)
+                        # ── FIX #2: trades ცხრილის დახურვა ────────────
+                        # sym პირველი (DB-ში "BTC/USDT_L2"), exchange_sym fallback
+                        _open_tr = get_open_trade_for_symbol(sym)
+                        if not _open_tr:
+                            _open_tr = get_open_trade_for_symbol(exchange_sym)
                         if _open_tr:
                             close_trade(_open_tr[0], exit_price, "SL", pnl_quote, pnl_pct)
                             logger.info(f"[DCA] TRADE_CLOSED_SL | {sym} signal_id={_open_tr[0]} pnl={pnl_quote:+.4f}")
@@ -366,9 +403,11 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
             )
 
             try:
-                buy = engine.exchange.place_market_buy_by_quote(sym, addon_size)
+                # FIX #4: exchange_sym გამოიყენება (არა sym) — Binance "BTC/USDT_L2"-ს არ იცნობს
+                buy = engine.exchange.place_market_buy_by_quote(exchange_sym, addon_size)
                 buy_price = float(buy.get("average") or buy.get("price") or current_price)
-                buy_qty   = addon_size / buy_price
+                # FIX #1: buy.get("filled") — Binance-ის რეალური დაფილვილი qty (slippage-გათვლილი)
+                buy_qty   = float(buy.get("filled") or buy.get("amount") or (addon_size / buy_price))
 
                 avg_result = recalculate_average(total_qty, avg_entry, buy_qty, buy_price)
                 new_avg    = avg_result["avg_entry_price"]
@@ -391,7 +430,6 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                     last_add_on_ts=time.time(),
                 )
 
-                closes = [float(c[4]) for c in ohlcv]
                 rsi_val = score_details.get("rsi", 0.0)
                 atr_val = score_details.get("atr_pct", 0.0)
 
@@ -540,7 +578,8 @@ def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
             # ყიდვა
             buy = engine.exchange.place_market_buy_by_quote(sym, quote)
             buy_price = float(buy.get("average") or buy.get("price") or current_price)
-            buy_qty   = quote / buy_price
+            # FIX #1: buy.get("filled") — Binance-ის რეალური დაფილვილი qty (slippage-გათვლილი)
+            buy_qty   = float(buy.get("filled") or buy.get("amount") or (quote / buy_price))
 
             tp_price = round(buy_price * (1.0 + tp_pct / 100.0), 6)
 
@@ -574,7 +613,6 @@ def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
             )
 
             # trades ცხრილი
-            from execution.db.repository import mark_signal_id_executed
             import uuid
             l2_signal_id = f"L2-{sym.replace('/', '')}-{uuid.uuid4().hex[:8]}"
             open_trade(
@@ -625,21 +663,21 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
     """
     Cascade DCA — "Rolling Exchange" სტრატეგია.
 
-    ლოგიკა:
-      - სულ გახსნილი Layer-ების რაოდენობა >= CASCADE_START_LAYER (default=7)?
-      - ყოველ symbol-ზე: ყველაზე ძველი Layer გამოვავლინოთ
-      - current_price <= oldest_layer_avg × (1 - CASCADE_DROP_PCT/100)?
-      - Exchange: ძველი Layer დავხუროთ (market sell) → ახალი Layer გავხსნათ
-        გამოთავისუფლებული თანხით (exchange_proceeds)
-      - Layer რაოდენობა >= CASCADE_MAX_LAYERS (default=10)?
-        → გაჩერება, CASCADE_RESUME_LAYER (default=16)-მდე ლოდინი
+    Layer-ის მიხედვით drop_pct და tp_pct იცვლება:
+      L2-L3:  drop=1.5%  tp=0.55%
+      L4-L7:  drop=2.0%  tp=0.65%
+      L8-L10: drop=3.0%  tp=0.65%
+      L10+:   CASCADE_MAX_LAYERS=10 → გაჩერება
 
     ENV:
       CASCADE_ENABLED=true
-      CASCADE_START_LAYER=7       ← მე-7 სვლიდან იწყება
-      CASCADE_DROP_PCT=1.5        ← იგივე Layer2-ის trigger
+      CASCADE_START_LAYER=2       ← L2-დან იწყება
+      CASCADE_DROP_PCT=1.5        ← L2-L3 trigger
+      CASCADE_DROP_L4_PCT=2.0     ← L4-L7 trigger
+      CASCADE_DROP_L8_PCT=3.0     ← L8-L10 trigger
+      CASCADE_TP_L3_PCT=0.65      ← L3+ TP პროცენტი
       CASCADE_MAX_LAYERS=10       ← მე-10-ზე გაჩერება
-      CASCADE_RESUME_LAYER=16     ← მე-16-ზე გახსნა
+      CASCADE_RESUME_LAYER=10     ← dead zone გაუქმება
       CASCADE_SYMBOLS=BTC/USDT,BNB/USDT,ETH/USDT
     """
     import os
@@ -658,13 +696,16 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
         log_event,
     )
 
-    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "7"))
-    drop_pct       = float(os.getenv("CASCADE_DROP_PCT",   "1.5"))
-    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",   "10"))
-    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER", "16"))
+    cascade_start  = int(os.getenv("CASCADE_START_LAYER",  "2"))
+    drop_pct_base  = float(os.getenv("CASCADE_DROP_PCT",    "1.5"))  # L2-L3
+    drop_pct_l4    = float(os.getenv("CASCADE_DROP_L4_PCT", "2.0"))  # L4-L7
+    drop_pct_l8    = float(os.getenv("CASCADE_DROP_L8_PCT", "3.0"))  # L8-L10
+    tp_pct_base    = float(os.getenv("DCA_TP_PCT",          "0.55")) # L1-L2
+    tp_pct_l3      = float(os.getenv("CASCADE_TP_L3_PCT",   "0.65")) # L3-L10
+    max_layers     = int(os.getenv("CASCADE_MAX_LAYERS",    "10"))
+    resume_layer   = int(os.getenv("CASCADE_RESUME_LAYER",  "10"))   # dead zone გაუქმება
     symbols_raw    = os.getenv("CASCADE_SYMBOLS", "BTC/USDT,BNB/USDT,ETH/USDT")
     symbols        = [s.strip() for s in symbols_raw.split(",") if s.strip()]
-    tp_pct         = float(os.getenv("DCA_TP_PCT", "0.55"))
     buffer         = float(os.getenv("SMART_ADDON_BUFFER", "5.0"))
 
     # ყველა ღია პოზიცია
@@ -702,12 +743,11 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                 continue
 
             # ამ symbol-ის ყველა Layer — გახსნის დროის მიხედვით დავალაგოთ
+            # FIX #3: regex — _L2, _L3 ... _L99+ ყველა suffix იფარება
+            import re as _re
             sym_positions = [
                 p for p in all_positions
-                if str(p.get("symbol", "")).upper().replace("_L2", "").replace("_L3", "")
-                   .replace("_L4", "").replace("_L5", "").replace("_L6", "")
-                   .replace("_L7", "").replace("_L8", "").replace("_L9", "")
-                   .replace("_L10", "") == sym.upper()
+                if _re.sub(r'_L\d+$', '', str(p.get("symbol", "")).upper()) == sym.upper()
             ]
 
             if len(sym_positions) < 2:
@@ -721,6 +761,30 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             oldest_quote = float(oldest.get("total_quote_spent", 0.0))
             oldest_id    = oldest["id"]
             oldest_sym   = oldest["symbol"]
+
+            # Layer ნომერი განვსაზღვროთ (sym_positions.len = ახლანდელი layer count)
+            layer_num = len(sym_positions)  # მაგ: 2 = L2, 4 = L4...
+
+            # ── Layer-ის მიხედვით drop_pct ─────────────────────────
+            # L2-L3: 1.5%  |  L4-L7: 2.0%  |  L8-L10: 3.0%
+            if layer_num >= 8:
+                drop_pct = drop_pct_l8
+            elif layer_num >= 4:
+                drop_pct = drop_pct_l4
+            else:
+                drop_pct = drop_pct_base
+
+            # ── Layer-ის მიხედვით tp_pct ───────────────────────────
+            # L1-L2: 0.55%  |  L3-L10: 0.65%
+            if layer_num >= 3:
+                tp_pct = tp_pct_l3
+            else:
+                tp_pct = tp_pct_base
+
+            logger.info(
+                f"[CASCADE] {sym} | layer={layer_num} "
+                f"drop_trigger={drop_pct:.1f}% tp={tp_pct:.2f}%"
+            )
 
             if oldest_avg <= 0 or oldest_qty <= 0:
                 continue
@@ -775,13 +839,42 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
 
                 # trades დახურვა
                 open_tr = get_open_trade_for_symbol(oldest_sym)
+                if not open_tr:
+                    # fallback: suffix-ის გარეშე ვეძებთ (BTC/USDT_L2 → BTC/USDT)
+                    open_tr = get_open_trade_for_symbol(exchange_sym)
+                if not open_tr:
+                    # fallback2: base symbol-ის ყველა ვარიანტი (_L2 … _L10)
+                    base = exchange_sym.replace("/USDT", "")
+                    for suffix in ["", "_L2", "_L3", "_L4", "_L5", "_L6", "_L7", "_L8", "_L9", "_L10"]:
+                        _tr = get_open_trade_for_symbol(f"{base}/USDT{suffix}")
+                        if _tr:
+                            open_tr = _tr
+                            break
                 if open_tr:
                     close_trade(open_tr[0], sell_price, "CASCADE_EXCHANGE", pnl_quote, pnl_pct)
+                    logger.info(f"[CASCADE] TRADE_CLOSED | {oldest_sym} signal_id={open_tr[0]}")
+                else:
+                    logger.warning(f"[CASCADE] TRADE_NOT_FOUND | {oldest_sym} → DB may be out of sync")
 
                 logger.warning(
                     f"[CASCADE] SOLD | {oldest_sym} price={sell_price:.4f} "
                     f"proceeds={net_proceeds:.4f} pnl={pnl_quote:+.4f}"
                 )
+
+                # ── Telegram — CASCADE გაყიდვის შეტყობინება ──────────
+                try:
+                    notify_dca_closed(
+                        symbol=oldest_sym,
+                        entry_price=oldest_avg,
+                        exit_price=sell_price,
+                        pnl_quote=pnl_quote,
+                        pnl_pct=pnl_pct,
+                        outcome="CASCADE_SELL",
+                        add_on_count=0,
+                        stats=None,
+                    )
+                except Exception as _tg_sell:
+                    logger.warning(f"[CASCADE] TG_SELL_FAIL | err={_tg_sell}")
 
             except Exception as _se:
                 logger.error(f"[CASCADE] SELL_FAIL | {oldest_sym} err={_se}")
@@ -800,7 +893,8 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                 buy_quote = max(net_proceeds, 10.0)  # მინიმუმ $10
                 buy = engine.exchange.place_market_buy_by_quote(exchange_sym, buy_quote)
                 buy_price = float(buy.get("average") or buy.get("price") or current_price)
-                buy_qty   = buy_quote / buy_price
+                # FIX #1: buy.get("filled") — Binance-ის რეალური დაფილვილი qty (slippage-გათვლილი)
+                buy_qty   = float(buy.get("filled") or buy.get("amount") or (buy_quote / buy_price))
                 tp_price  = round(buy_price * (1.0 + tp_pct / 100.0), 6)
 
                 # dca_positions გახსნა
@@ -879,6 +973,71 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             logger.error(f"[CASCADE] ERR | {sym} err={e}")
 
 
+def _start_bot_api_server() -> None:
+    """
+    Bot API Server — Dashboard-ისთვის DB data-ს აბრუნებს.
+    GET /api/stats  → positions + trades + stats JSON
+    GET /health     → liveness check
+
+    ENV:
+      BOT_API_ENABLED=true   ← ჩართვა/გამორთვა (default: true)
+      BOT_API_PORT=5001      ← port (default: 5001)
+    """
+    if not os.getenv("BOT_API_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        return
+
+    try:
+        from flask import Flask as _Flask, jsonify as _jsonify
+    except ImportError:
+        logger.warning("[BOT_API] Flask not installed → API disabled")
+        return
+
+    import threading as _threading
+    from datetime import datetime as _dt, timezone as _tz
+
+    api_app = _Flask("bot_api")
+
+    @api_app.route("/api/stats")
+    def bot_api_stats():
+        try:
+            from execution.db.repository import (
+                get_trade_stats,
+                get_all_open_dca_positions,
+                get_closed_trades,
+            )
+            stats     = get_trade_stats()
+            positions = get_all_open_dca_positions()
+            trades    = get_closed_trades()
+            recent = sorted(
+                [t for t in trades if t.get("outcome")],
+                key=lambda x: str(x.get("closed_at", "")),
+                reverse=True,
+            )[:20]
+            return _jsonify({
+                "stats":         stats,
+                "positions":     positions,
+                "recent_trades": recent,
+                "timestamp":     _dt.now(_tz.utc).isoformat(),
+            })
+        except Exception as e:
+            logger.error(f"[BOT_API] stats error: {e}")
+            return _jsonify({"error": str(e)}), 500
+
+    @api_app.route("/health")
+    def bot_api_health():
+        return _jsonify({"status": "ok", "service": "GENIUS-DCA-Bot"})
+
+    def _run():
+        port = int(os.getenv("BOT_API_PORT", "5001"))
+        logger.info(f"[BOT_API] Starting on port {port} → /api/stats")
+        api_app.run(host="0.0.0.0", port=port, debug=False,
+                    use_reloader=False, threaded=True)
+
+    t = _threading.Thread(target=_run, daemon=True, name="bot_api")
+    t.start()
+    logger.info("[BOT_API] API server thread started")
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 
@@ -895,6 +1054,85 @@ def main():
 
     init_db()
     _bootstrap_state_if_needed()
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # TP FIX — Take Profit ავტომატური გასწორება (memory-safe!)
+    # Binance API არ სჭირდება — მხოლოდ DB-ს კითხულობს
+    # L1-L2: TP=avg×1.0055  |  L3-L10: TP=avg×1.0065
+    # 10s delay — kill_switch DB conflict-ის თავიდანაცილება
+    # TP_FIX_ENABLED=true  ← ჩართვა/გამორთვა (default: true)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if os.getenv("TP_FIX_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        try:
+            import threading as _tp_thread
+            import time as _tp_time
+
+            def _run_tp_fix_delayed():
+                _tp_time.sleep(10)
+                try:
+                    from execution.tp_fix import run_tp_fix
+                    _r = run_tp_fix()
+                    logger.info(
+                        f"TP_FIX | checked={_r.get('checked',0)} "
+                        f"fixed={_r.get('fixed',0)} "
+                        f"skipped={_r.get('skipped',0)}"
+                    )
+                except Exception as _tpe2:
+                    logger.warning(f"TP_FIX_FAIL | err={_tpe2}")
+
+            _tp_thread.Thread(
+                target=_run_tp_fix_delayed,
+                daemon=True,
+                name="tp_fix"
+            ).start()
+            logger.info("TP_FIX | scheduled in 10s (background thread)")
+        except Exception as _tpe:
+            logger.warning(f"TP_FIX_THREAD_FAIL | err={_tpe}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
+    # buy_qty bug-ის გამო DB qty > Binance qty → TP გაყიდვა ვერ ხდება
+    # 20s delay — main loop DB init-ის შემდეგ გაეშვება (DB conflict თავიდანაცილება)
+    # QTY_SYNC_ENABLED=true     ← ჩართვა/გამორთვა
+    # QTY_SYNC_TOLERANCE=0.005  ← 0.5% სხვაობაზე გასწორება
+    # QTY_SYNC_DELAY=20         ← delay წამებში (default: 20)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if os.getenv("QTY_SYNC_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        try:
+            import threading as _qty_thread
+
+            def _run_qty_sync_delayed():
+                import time as _t
+                _delay = int(os.getenv("QTY_SYNC_DELAY", "20"))
+                _t.sleep(_delay)
+                try:
+                    from execution.qty_sync import run_qty_sync
+                    _r = run_qty_sync()
+                    logger.info(
+                        f"QTY_SYNC | checked={_r.get('checked',0)} "
+                        f"fixed={_r.get('fixed',0)} "
+                        f"skipped={_r.get('skipped',0)}"
+                    )
+                except Exception as _qe2:
+                    logger.warning(f"QTY_SYNC_FAIL | err={_qe2}")
+
+            _qty_thread.Thread(
+                target=_run_qty_sync_delayed,
+                daemon=True,
+                name="qty_sync"
+            ).start()
+            logger.info("QTY_SYNC | scheduled in 20s (background thread)")
+        except Exception as _qe:
+            logger.warning(f"QTY_SYNC_THREAD_FAIL | err={_qe}")
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # BOT API SERVER — Dashboard-ისთვის DB data /api/stats endpoint-ზე
+    # BOT_API_ENABLED=true, BOT_API_PORT=5001
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    try:
+        _start_bot_api_server()
+    except Exception as _ae:
+        logger.warning(f"BOT_API_START_FAIL | err={_ae}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # LIVE DASHBOARD — background thread, port 8080
@@ -920,7 +1158,7 @@ def main():
     generate_once = _try_import_generator()
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # FIX #3: MarketRegimeEngine — loop-გარეთ, ᲔᲠᲗᲘ instance სამუდამოდ
+    # FIX C-2: MarketRegimeEngine — loop-გარეთ, ᲔᲠᲗᲘ instance სამუდამოდ
     # ძველი კოდი ყოველ ტიკზე ახალ instance-ს ქმნიდა → state იკარგებოდა
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     regime_engine = MarketRegimeEngine()
@@ -1047,7 +1285,7 @@ def main():
                             logger.warning(f"EXPIRY_CHECK_FAIL | id={signal_id} err={e} → skip check")
 
                     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    # FIX #2: SELL signal — regime check bypass
+                    # FIX C-3: SELL signal — regime check bypass
                     # SELL (TREND_REVERSAL / PROTECTIVE_SELL) ყოველთვის
                     # სრულდება, SKIP_TRADING-ი მას ვერ ბლოკავს.
                     # ძველი კოდი SELL-საც ჩერდებოდა SIDEWAYS-ზე!
