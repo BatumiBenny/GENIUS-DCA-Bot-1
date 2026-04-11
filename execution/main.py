@@ -1059,19 +1059,35 @@ def main():
     # TP FIX — Take Profit ავტომატური გასწორება (memory-safe!)
     # Binance API არ სჭირდება — მხოლოდ DB-ს კითხულობს
     # L1-L2: TP=avg×1.0055  |  L3-L10: TP=avg×1.0065
+    # 10s delay — kill_switch DB conflict-ის თავიდანაცილება
     # TP_FIX_ENABLED=true  ← ჩართვა/გამორთვა (default: true)
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if os.getenv("TP_FIX_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
         try:
-            from execution.tp_fix import run_tp_fix
-            _tp_result = run_tp_fix()
-            logger.info(
-                f"TP_FIX | checked={_tp_result.get('checked',0)} "
-                f"fixed={_tp_result.get('fixed',0)} "
-                f"skipped={_tp_result.get('skipped',0)}"
-            )
+            import threading as _tp_thread
+            import time as _tp_time
+
+            def _run_tp_fix_delayed():
+                _tp_time.sleep(10)
+                try:
+                    from execution.tp_fix import run_tp_fix
+                    _r = run_tp_fix()
+                    logger.info(
+                        f"TP_FIX | checked={_r.get('checked',0)} "
+                        f"fixed={_r.get('fixed',0)} "
+                        f"skipped={_r.get('skipped',0)}"
+                    )
+                except Exception as _tpe2:
+                    logger.warning(f"TP_FIX_FAIL | err={_tpe2}")
+
+            _tp_thread.Thread(
+                target=_run_tp_fix_delayed,
+                daemon=True,
+                name="tp_fix"
+            ).start()
+            logger.info("TP_FIX | scheduled in 10s (background thread)")
         except Exception as _tpe:
-            logger.warning(f"TP_FIX_FAIL | err={_tpe}")
+            logger.warning(f"TP_FIX_THREAD_FAIL | err={_tpe}")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # FIX #5: QTY SYNC — Binance vs DB qty სინქრონიზაცია
