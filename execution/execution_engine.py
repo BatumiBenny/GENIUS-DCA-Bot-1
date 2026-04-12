@@ -27,7 +27,9 @@ from execution.db.repository import (
     delete_orphaned_trade,
 )
 from execution.kill_switch import is_kill_switch_active
-from execution.virtual_wallet import simulate_market_entry
+# virtual_wallet.py ამოღებულია — DEMO mode stub
+def simulate_market_entry(*args, **kwargs) -> None:
+    pass
 from execution.telegram_notifier import (
     notify_signal_created,
     notify_trade_closed,
