@@ -530,22 +530,67 @@ def notify_heartbeat(
     prices: dict,
     memory_mb: float = 0.0,
     pnl_today: float = 0.0,
+    positions: list = None,
 ) -> None:
-    """ყოველ 10 წუთს — ბოტი ცოცხალია."""
+    """ყოველ 10 წუთს — ბოტი ცოცხალია + პოზიციების სტატუსი."""
     btc = prices.get("BTC/USDT", 0.0)
     bnb = prices.get("BNB/USDT", 0.0)
     eth = prices.get("ETH/USDT", 0.0)
     mem_str = f" | 💾 <code>{memory_mb:.0f}MB</code>" if memory_mb > 0 else ""
+
     msg = (
-        f"💚 <b>BOT ALIVE</b>\n\n"
+        f"💚 <b>GENIUS BOT ALIVE</b>\n\n"
         f"📂 <b>Open:</b> <code>{open_count}</code> | 💰 <code>{_fmt_plain(open_capital, 2)} USDT</code>\n"
         f"₿ BTC <code>{_fmt_price(btc, 0)}</code> | "
         f"Ξ ETH <code>{_fmt_price(eth, 0)}</code> | "
         f"BNB <code>{_fmt_price(bnb, 2)}</code>\n"
         f"📈 <b>PnL today:</b> <code>{_fmt_usdt(pnl_today)}</code>"
         f"{mem_str}\n"
-        f"🕒 <code>{_now_str()}</code>"
     )
+
+    # პოზიციების სტატუსი — TP-მდე დაშორება + ინდიკატორი
+    if positions:
+        msg += "\n<b>📊 პოზიციები:</b>\n"
+        for pos in sorted(positions, key=lambda p: str(p.get("symbol", ""))):
+            sym = str(pos.get("symbol", ""))
+            avg = float(pos.get("avg_entry_price") or 0)
+            tp  = float(pos.get("current_tp_price") or 0)
+            if avg <= 0 or tp <= 0:
+                continue
+
+            # ახლანდელი ფასი cache-დან
+            base_sym = sym.split("_")[0]  # BTC/USDT_L2 → BTC/USDT
+            current = prices.get(base_sym, 0.0)
+            if current <= 0:
+                continue
+
+            # TP-მდე რამდენი %
+            tp_dist_pct = (tp - current) / current * 100.0
+            # avg-დან რამდენი % ქვევით
+            avg_dist_pct = (current - avg) / avg * 100.0
+
+            # ინდიკატორი:
+            # 🔴 ← TP-მდე > 1% (შორს)
+            # 🟡 ← TP-მდე 0.3-1% (შუაში)
+            # 🔵 ← TP-მდე < 0.3% (ახლოს!)
+            # 🟢 ← TP hit (current >= tp)
+            if current >= tp:
+                indicator = "🟢"
+            elif tp_dist_pct < 0.3:
+                indicator = "🔵"
+            elif tp_dist_pct < 1.0:
+                indicator = "🟡"
+            else:
+                indicator = "🔴"
+
+            msg += (
+                f"{indicator} <code>{_escape_html(sym)}</code> "
+                f"avg=<code>{_fmt_price(avg, 0)}</code> "
+                f"tp=<code>{_fmt_price(tp, 0)}</code> "
+                f"(<code>{tp_dist_pct:+.2f}%</code>)\n"
+            )
+
+    msg += f"🕒 <code>{_now_str()}</code>"
     send_telegram_message(msg)
 
 
