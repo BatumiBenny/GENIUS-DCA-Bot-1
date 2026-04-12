@@ -488,3 +488,109 @@ def notify_dca_breakeven(
         f"🕒 <b>Time:</b> <code>{_now_str()}</code>"
     )
     send_telegram_message(msg)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# D: CASCADE SELL — გაუმჯობესებული შეტყობინება
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def notify_cascade_exchange(
+    symbol: str,
+    old_avg: float,
+    old_layer: str,
+    new_avg: float,
+    new_layer: str,
+    sell_price: float,
+    pnl_quote: float,
+    drop_pct: float,
+    new_tp: float,
+) -> None:
+    """CASCADE Rolling Exchange — გამარტივებული avg."""
+    recovery_needed = ((new_tp / new_avg) - 1.0) * 100.0 if new_avg > 0 else 0.0
+    pnl_icon = "🟢" if pnl_quote >= 0 else "🔴"
+    msg = (
+        f"🔄 <b>CASCADE EXCHANGE</b>\n\n"
+        f"🪙 <b>Symbol:</b> <code>{_escape_html(symbol)}</code>\n"
+        f"📤 <b>გაიყიდა:</b> <code>{_escape_html(old_layer)}</code> avg=<code>{_fmt_price(old_avg)}</code>\n"
+        f"📥 <b>გაიხსნა:</b> <code>{_escape_html(new_layer)}</code> avg=<code>{_fmt_price(new_avg)}</code>\n"
+        f"📉 <b>Avg ჩამოვიდა:</b> <code>{_fmt_price(old_avg)} → {_fmt_price(new_avg)}</code>\n"
+        f"{pnl_icon} <b>Exchange PnL:</b> <code>{_fmt_usdt(pnl_quote)}</code>\n"
+        f"📊 <b>Drop trigger:</b> <code>{drop_pct:.2f}%</code>\n"
+        f"🎯 <b>TP:</b> <code>{_fmt_price(new_tp)}</code> (+{recovery_needed:.2f}%)\n"
+        f"🕒 <b>Time:</b> <code>{_now_str()}</code>"
+    )
+    send_telegram_message(msg)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# E: HEARTBEAT — ბოტი ცოცხალია
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def notify_heartbeat(
+    open_count: int,
+    open_capital: float,
+    prices: dict,
+    memory_mb: float = 0.0,
+    pnl_today: float = 0.0,
+) -> None:
+    """ყოველ 10 წუთს — ბოტი ცოცხალია."""
+    btc = prices.get("BTC/USDT", 0.0)
+    bnb = prices.get("BNB/USDT", 0.0)
+    eth = prices.get("ETH/USDT", 0.0)
+    mem_str = f" | 💾 <code>{memory_mb:.0f}MB</code>" if memory_mb > 0 else ""
+    msg = (
+        f"💚 <b>BOT ALIVE</b>\n\n"
+        f"📂 <b>Open:</b> <code>{open_count}</code> | 💰 <code>{_fmt_plain(open_capital, 2)} USDT</code>\n"
+        f"₿ BTC <code>{_fmt_price(btc, 0)}</code> | "
+        f"Ξ ETH <code>{_fmt_price(eth, 0)}</code> | "
+        f"BNB <code>{_fmt_price(bnb, 2)}</code>\n"
+        f"📈 <b>PnL today:</b> <code>{_fmt_usdt(pnl_today)}</code>"
+        f"{mem_str}\n"
+        f"🕒 <code>{_now_str()}</code>"
+    )
+    send_telegram_message(msg)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# F: CASCADE DEPTH WARNING — სიღრმის გაფრთხილება
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def notify_cascade_depth(
+    symbol: str,
+    layer_num: int,
+    max_layers: int,
+    drop_from_high_pct: float,
+    current_price: float,
+    avg_entry: float,
+    price_trend: str = "unknown",
+) -> None:
+    """CASCADE სიღრმის გაფრთხილება L7+."""
+    remaining = max_layers - layer_num
+
+    if layer_num >= max_layers:
+        icon = "🚨"
+        title = f"CASCADE MAX — ბოტი შეჩერდება!"
+    elif layer_num >= max_layers - 1:
+        icon = "🔴"
+        title = f"CASCADE L{layer_num}/{max_layers} — კრიტიკული! {remaining} layer დარჩა"
+    else:
+        icon = "⚠️"
+        title = f"CASCADE L{layer_num}/{max_layers} — ღრმა ვარდნა"
+
+    drawdown = ((avg_entry - current_price) / avg_entry * 100.0) if avg_entry > 0 else 0.0
+
+    if price_trend == "down":
+        trend_str = "📉 ბაზარი კვლავ ეცემა"
+    elif price_trend == "up":
+        trend_str = "📈 ბაზარი იწყებს ზრდას"
+    else:
+        trend_str = "➡️ ბაზარი სტაბილურია"
+
+    msg = (
+        f"{icon} <b>{_escape_html(title)}</b>\n\n"
+        f"🪙 <b>Symbol:</b> <code>{_escape_html(symbol)}</code>\n"
+        f"📉 <b>HIGH-დან ვარდნა:</b> <code>{drop_from_high_pct:.2f}%</code>\n"
+        f"📊 <b>Avg entry-დან:</b> <code>{drawdown:.2f}%</code>\n"
+        f"💰 <b>ფასი:</b> <code>{_fmt_price(current_price)}</code>\n"
+        f"🎯 <b>Avg entry:</b> <code>{_fmt_price(avg_entry)}</code>\n"
+        f"{trend_str}\n"
+        f"🕒 <code>{_now_str()}</code>"
+    )
+    send_telegram_message(msg)
