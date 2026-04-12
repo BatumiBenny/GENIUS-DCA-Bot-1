@@ -5,29 +5,43 @@ from typing import Optional, Dict, Any
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GENIUS-DCA-Bot — main.py
-# CHANGELOG (2026-04-10):
+# CHANGELOG:
 #
 # FIX #1 — buy_qty slippage correction (3 ადგილი)
 #   პრობლემა: buy_qty = quote / buy_price  → slippage იგნორირებული
 #   გამოსწორება: buy.get("filled") → Binance-ის რეალური filled qty
-#   ადგილები: LAYER2 (სტრ.555), ADD-ON (სტრ.382), CASCADE (სტრ.829)
 #
 # FIX #2 — TP/SL/FC trades lookup Layer სიმბოლოებისთვის
-#   პრობლემა: get_open_trade_for_symbol(exchange_sym) — DB-ში "BTC/USDT_L2"
-#             ინახება, exchange_sym="BTC/USDT" → trade ვერ იპოვებოდა
-#   გამოსწორება: sym პირველი (DB tag), exchange_sym fallback
-#   ადგილები: TP close, FORCE_CLOSE, SL close (სტრ.219, 265, 315)
+#   პრობლემა: BTC/USDT_L2 trade ვერ იპოვებოდა DB-ში
+#   გამოსწორება: sym პირველი, exchange_sym fallback
 #
 # FIX #3 — CASCADE symbol suffix regex
-#   პრობლემა: .replace("_L10","") — _L11, _L12+ არ იფარებოდა
-#   გამოსწორება: re.sub(r'_L\d+$', '', ...) — ყველა suffix იფარება
-#   ადგილი: _check_cascade_exchange (სტრ.718-722)
+#   გამოსწორება: re.sub(r'_L\d+$', '') — ყველა suffix იფარება
 #
 # FIX #4 — ADD-ON exchange_sym
-#   პრობლემა: place_market_buy_by_quote(sym) — sym="BTC/USDT_L2"
-#             Binance არ იცნობს "_L2" suffix-ს
-#   გამოსწორება: exchange_sym გამოიყენება (suffix გარეშე)
-#   ადგილი: _run_dca_loop add-on (სტრ.379)
+#   გამოსწორება: exchange_sym (suffix გარეშე) Binance-ისთვის
+#
+# FIX #9 — LAYER2 Cooldown 180s (2026-04-12)
+#   პრობლემა: BTC/ETH/BNB ერთდროულად L2 → $36 ერთ წამში!
+#   გამოსწორება: _LAST_L2_TS + LAYER2_COOLDOWN_SECONDS=180
+#
+# FIX #10 — CASCADE net_proceeds < $10 → skip (2026-04-12)
+#   პრობლემა: max(net_proceeds, 10.0) → გარე ფულის დამატება
+#   გამოსწორება: net_proceeds < $10 → skip
+#
+# FIX #11 — Layer პოზიციებზე ADD-ON skip (2026-04-12)
+#   პრობლემა: BTC/USDT_L2-ზე ADD-ON → CASCADE conflict
+#   გამოსწორება: is_layer2=True → SKIP_ADDON → continue
+#
+# FIX #13 — CASCADE buy_quote fixed $12 (2026-04-12)
+#   პრობლემა: net_proceeds ცვალებადია → TP < avg → არასოდეს გაიყიდება
+#   გამოსწორება: buy_quote = BOT_QUOTE_PER_TRADE (fixed $12)
+#   ადგილი: _check_cascade_exchange() ახალი Layer გახსნა
+#
+# FIX #14 — TP_FIX ყოველ loop-ზე (2026-04-12)
+#   პრობლემა: CASCADE-ის შემდეგ TP < avg → პოზიცია არასოდეს იყიდება
+#   გამოსწორება: run_tp_fix() ყოველ 120s loop-ზე
+#   ადგილი: main loop, DCA loop-მდე
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -886,7 +900,10 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                 logger.error(f"[CASCADE] SELL_FAIL | {oldest_sym} err={_se}")
                 continue
 
-            # ── ახალი Layer გახსნა net_proceeds-ით ───────────────────
+            # ── ახალი Layer გახსნა ───────────────────────────────────
+            # FIX #13: ყოველთვის ENV-დან fixed quote — net_proceeds კი არა!
+            # net_proceeds ცვალებადია (ზარალით გაყიდვა → ნაკლები თანხა)
+            # fixed quote = ყოველთვის $12 → Binance minimum notional ✅
             if net_proceeds < 5.0:
                 logger.warning(f"[CASCADE] LOW_PROCEEDS | {net_proceeds:.4f} < $5 → skip new layer")
                 continue
@@ -896,7 +913,9 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             new_sym = f"{sym}_L{layer_num + 1}"
 
             try:
-                buy_quote = max(net_proceeds, 10.0)  # მინიმუმ $10
+                # FIX #13: fixed quote ENV-დან (BOT_QUOTE_PER_TRADE=12)
+                # net_proceeds → balance-ში ბრუნდება, შემდეგ fixed quote-ით ვყიდულობთ
+                buy_quote = float(os.getenv("BOT_QUOTE_PER_TRADE", "12.0"))
                 buy = engine.exchange.place_market_buy_by_quote(exchange_sym, buy_quote)
                 buy_price = float(buy.get("average") or buy.get("price") or current_price)
                 # FIX #1: buy.get("filled") — Binance-ის რეალური დაფილვილი qty (slippage-გათვლილი)
@@ -924,7 +943,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     order_type="CASCADE_LAYER",
                     entry_price=buy_price,
                     qty=buy_qty,
-                    quote_spent=net_proceeds,
+                    quote_spent=buy_quote,  # FIX #13: fixed $12
                     avg_entry_after=buy_price,
                     tp_after=tp_price,
                     sl_after=0.0,
@@ -939,7 +958,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     signal_id=cascade_signal_id,
                     symbol=new_sym,
                     qty=buy_qty,
-                    quote_in=net_proceeds,
+                    quote_in=buy_quote,  # FIX #13: fixed $12
                     entry_price=buy_price,
                 )
 
@@ -947,7 +966,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     log_event(
                         "CASCADE_LAYER_OPENED",
                         f"sym={new_sym} entry={buy_price:.4f} tp={tp_price:.4f} "
-                        f"quote={net_proceeds:.4f} from={oldest_sym}"
+                        f"quote={buy_quote:.4f} from={oldest_sym}"  # FIX #13
                     )
                 except Exception:
                     pass
@@ -958,7 +977,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     notify_signal_created(
                         symbol=new_sym,
                         entry_price=buy_price,
-                        quote_amount=net_proceeds,
+                        quote_amount=buy_quote,  # FIX #13: fixed $12
                         tp_price=tp_price,
                         sl_price=0.0,
                         verdict="CASCADE_BUY",
@@ -969,7 +988,7 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
 
                 logger.warning(
                     f"[CASCADE] NEW_LAYER | {new_sym} entry={buy_price:.4f} "
-                    f"tp={tp_price:.4f} quote={net_proceeds:.4f}"
+                    f"tp={tp_price:.4f} quote={buy_quote:.4f}"  # FIX #13
                 )
 
             except Exception as _be:
@@ -1207,6 +1226,22 @@ def main():
             #     engine.reconcile_oco()
             # except Exception as e:
             #     logger.warning(f"OCO_RECONCILE_LOOP_WARN | err={e}")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # FIX #14: TP_FIX — ყოველ loop-ზე TP სისწორის შემოწმება
+            # CASCADE-ის შემდეგ TP შეიძლება avg-ზე დაბლა დარჩეს → არასოდეს გაიყიდება!
+            # memory-safe: მხოლოდ DB-ს კითხულობს, Binance API არ სჭირდება
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if _dca_enabled:
+                try:
+                    from execution.tp_fix import run_tp_fix
+                    _tp_r = run_tp_fix()
+                    if _tp_r.get("fixed", 0) > 0:
+                        logger.warning(
+                            f"TP_FIX_LOOP | fixed={_tp_r['fixed']} checked={_tp_r['checked']}"
+                        )
+                except Exception as _tfe:
+                    logger.warning(f"TP_FIX_LOOP_WARN | err={_tfe}")
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # DCA LOOP — add-on check + TP/SL + breakeven + force close
