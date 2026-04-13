@@ -248,7 +248,23 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
             if tp_price > 0 and current_price >= tp_price:
                 logger.info(f"[DCA] TP_HIT | {sym} price={current_price:.4f} >= tp={tp_price:.4f}")
                 try:
-                    sell = engine.exchange.place_market_sell(exchange_sym, total_qty)
+                    # CRIT#1 FIX: _safe_sell_amount — floor + min_qty + min_notional.
+                    # total_qty DB-დან მოდის (float, 6 decimal). BNB lot=0.01:
+                    # 0.019876 → floor → 0.01 × $600 = $6 < min_notional $10 →
+                    # Binance: Filter failure MIN_NOTIONAL → InvalidOrder.
+                    # _safe_sell_amount() ამ შემთხვევაში 0.0 დააბრუნებს → skip guard.
+                    from execution.execution_engine import _safe_sell_amount
+                    _sell_qty = _safe_sell_amount(
+                        engine.exchange, exchange_sym, total_qty, current_price
+                    )
+                    if _sell_qty <= 0:
+                        logger.warning(
+                            f"[DCA] TP_SELL_SKIP_BELOW_MIN | {sym} "
+                            f"qty={total_qty:.8f} price={current_price:.4f} "
+                            f"→ below exchange minimum, position held"
+                        )
+                        continue
+                    sell = engine.exchange.place_market_sell(exchange_sym, _sell_qty)
                     exit_price = float(sell.get("average") or sell.get("price") or current_price)
                     pnl_quote = (exit_price - avg_entry) * total_qty
                     pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
@@ -295,7 +311,17 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
             if force_close:
                 logger.warning(f"[DCA] FORCE_CLOSE | {sym} reason={fc_reason}")
                 try:
-                    sell = engine.exchange.place_market_sell(exchange_sym, total_qty)
+                    from execution.execution_engine import _safe_sell_amount
+                    _sell_qty = _safe_sell_amount(
+                        engine.exchange, exchange_sym, total_qty, current_price
+                    )
+                    if _sell_qty <= 0:
+                        logger.warning(
+                            f"[DCA] FC_SELL_SKIP_BELOW_MIN | {sym} "
+                            f"qty={total_qty:.8f} → below exchange minimum"
+                        )
+                        continue
+                    sell = engine.exchange.place_market_sell(exchange_sym, _sell_qty)
                     exit_price = float(sell.get("average") or sell.get("price") or current_price)
                     pnl_quote = (exit_price - avg_entry) * total_qty
                     pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
@@ -345,7 +371,17 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
                 if sl_confirmed:
                     logger.info(f"[DCA] SL_CONFIRMED | {sym} reason={sl_reason}")
                     try:
-                        sell = engine.exchange.place_market_sell(exchange_sym, total_qty)
+                        from execution.execution_engine import _safe_sell_amount
+                        _sell_qty = _safe_sell_amount(
+                            engine.exchange, exchange_sym, total_qty, current_price
+                        )
+                        if _sell_qty <= 0:
+                            logger.warning(
+                                f"[DCA] SL_SELL_SKIP_BELOW_MIN | {sym} "
+                                f"qty={total_qty:.8f} → below exchange minimum"
+                            )
+                            continue
+                        sell = engine.exchange.place_market_sell(exchange_sym, _sell_qty)
                         exit_price = float(sell.get("average") or sell.get("price") or current_price)
                         pnl_quote = (exit_price - avg_entry) * total_qty
                         pnl_pct   = (exit_price / avg_entry - 1.0) * 100.0
@@ -496,6 +532,15 @@ def _run_dca_loop(engine, dca_mgr, tp_sl_mgr, risk_mgr) -> None:
             logger.warning(f"[DCA] POSITION_LOOP_ERR | {sym} id={pos_id} err={e}")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRIT#2 FIX: LAYER2 Cooldown — global timestamp.
+# CHANGELOG-ში წერია "FIX #9 — LAYER2 Cooldown 180s",
+# მაგრამ _LAST_L2_TS ცვლადი კოდში არ არსებობდა.
+# შედეგი: BTC+ETH+BNB ერთდროულად crash → $36 LIVE ფული ერთ loop-ში.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_LAST_L2_TS: float = 0.0
+
+
 def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
     """
     Layer 2 — Crash Detection & Parallel Trading.
@@ -516,6 +561,19 @@ def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
 
     # Layer 2 ჩართულია?
     if not os.getenv("LAYER2_ENABLED", "true").strip().lower() in ("1", "true", "yes"):
+        return
+
+    # CRIT#2 FIX: global cooldown — BTC trigger-ის შემდეგ ETH/BNB 180s ელოდება.
+    # LAYER2_COOLDOWN_SECONDS ENV-შია (=180), კოდი ახლა კითხულობს.
+    global _LAST_L2_TS
+    import time as _l2_time
+    _l2_cooldown = int(os.getenv("LAYER2_COOLDOWN_SECONDS", "180"))
+    _l2_elapsed  = _l2_time.time() - _LAST_L2_TS
+    if _l2_elapsed < _l2_cooldown:
+        logger.debug(
+            f"[LAYER2] GLOBAL_COOLDOWN | "
+            f"remaining={int(_l2_cooldown - _l2_elapsed)}s → skip all symbols"
+        )
         return
 
     from execution.db.repository import (
@@ -674,6 +732,8 @@ def _check_and_open_layer2(engine, tp_sl_mgr) -> None:
                 f"[LAYER2] OPENED | {sym_l2} entry={buy_price:.4f} "
                 f"tp={tp_price:.4f} qty={buy_qty:.6f}"
             )
+            # CRIT#2 FIX: timestamp განახლება — შემდეგი symbol 180s-ს ელოდება
+            _LAST_L2_TS = _l2_time.time()
 
         except Exception as e:
             logger.error(f"[LAYER2] ERR | {sym} err={e}")
@@ -846,9 +906,24 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
             )
 
             try:
-                sell = engine.exchange.place_market_sell(exchange_sym, oldest_qty)
+                # CRIT#1 FIX: CASCADE sell — _safe_sell_amount floor + min_notional.
+                # oldest_qty = DB-ის float (e.g. 0.019876 BNB).
+                # Binance lot=0.01 → floor → 0.01 BNB × $600 = $6 < $10 min_notional.
+                # 0.0 return → skip new layer (proceeds < $5 guard-ი ქვემოთ იჭერს).
+                from execution.execution_engine import _safe_sell_amount
+                _cascade_sell_qty = _safe_sell_amount(
+                    engine.exchange, exchange_sym, oldest_qty, current_price
+                )
+                if _cascade_sell_qty <= 0:
+                    logger.warning(
+                        f"[CASCADE] SELL_SKIP_BELOW_MIN | {oldest_sym} "
+                        f"qty={oldest_qty:.8f} price={current_price:.4f} "
+                        f"→ below exchange minimum, skip layer exchange"
+                    )
+                    continue
+                sell = engine.exchange.place_market_sell(exchange_sym, _cascade_sell_qty)
                 sell_price = float(sell.get("average") or sell.get("price") or current_price)
-                proceeds = sell_price * oldest_qty
+                proceeds = sell_price * _cascade_sell_qty
                 fee = proceeds * 0.001  # 0.1% fee
                 net_proceeds = round(proceeds - fee, 4)
 
@@ -919,13 +994,21 @@ def _check_cascade_exchange(engine, tp_sl_mgr) -> None:
                     logger.warning(f"[CASCADE] TG_SELL_FAIL | err={_tg_sell}")
 
                 # ── C: DAILY LOSS TRACKING ────────────────────────────
-                # CASCADE pnl_quote < 0 → დღის ზარალში ვამატებთ
+                # CRIT#3 FIX: _daily_loss_total main()-ის scope-შია →
+                # inner function-ში UnboundLocalError.
+                # try/except Exception: pass ჩუმად ყლაპავდა error-ს →
+                # daily loss limit CASCADE-ისთვის გათიშული იყო LIVE-ზე.
+                # გამოსწორება: DB audit_log-ში ვწერთ (restart-safe).
+                # main() loop-ი ამ event-ებს კითხულობს daily sum-ისთვის.
                 if pnl_quote < 0:
                     try:
-                        _daily_loss_total += pnl_quote
+                        log_event(
+                            "CASCADE_LOSS",
+                            f"sym={oldest_sym} pnl={pnl_quote:.4f}"
+                        )
                         logger.info(
-                            f"[DAILY_LOSS] {sym} pnl={pnl_quote:+.4f} "
-                            f"daily_total={_daily_loss_total:.4f} limit={daily_max_loss}"
+                            f"[DAILY_LOSS] CASCADE | {oldest_sym} "
+                            f"pnl={pnl_quote:+.4f} (logged to DB)"
                         )
                     except Exception:
                         pass
@@ -1325,12 +1408,36 @@ def main():
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # C: DAILY LOSS — დღის reset შემოწმება
+            # CRIT#3 FIX: CASCADE_LOSS events DB-დან ემატება _daily_loss_total-ს.
+            # inner function scope bug → DB-based tracking (restart-safe).
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             _today = _now_dt().date().isoformat()
             if _today != _daily_loss_date:
                 _daily_loss_date = _today
                 _daily_loss_total = 0.0
                 logger.info(f"DAILY_LOSS_RESET | date={_today} limit={daily_max_loss}")
+
+            # CASCADE_LOSS events-დან დღის ზარალი — CRIT#3 fix
+            try:
+                from execution.db.repository import _fetchall
+                import re as _re_loss
+                _c_rows = _fetchall(
+                    "SELECT message FROM audit_log "
+                    "WHERE event_type='CASCADE_LOSS' "
+                    "AND created_at >= date('now','localtime') "
+                    "ORDER BY id DESC LIMIT 100"
+                )
+                _cascade_day_loss = 0.0
+                for _cr in (_c_rows or []):
+                    _m = _re_loss.search(r'pnl=([+-]?\d+\.\d+)', str(_cr[0]))
+                    if _m:
+                        _v = float(_m.group(1))
+                        if _v < 0:
+                            _cascade_day_loss += _v
+                if _cascade_day_loss < 0:
+                    _daily_loss_total = _cascade_day_loss
+            except Exception:
+                pass
 
             # DAILY LOSS LIMIT — limit-ს გადაცდა → skip ვაჭრობა
             if daily_max_loss > 0 and _daily_loss_total <= -daily_max_loss:
