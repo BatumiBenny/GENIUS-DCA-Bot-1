@@ -332,11 +332,24 @@ def notify_trade_closed(
 
 
 def notify_performance_snapshot(stats: Dict[str, Any]) -> None:
+    cascade_count = int(stats.get("cascade_count", 0))
+    cascade_pnl   = float(stats.get("cascade_pnl", 0.0))
+    cascade_sign  = "+" if cascade_pnl >= 0 else ""
+    cascade_icon  = "🟢" if cascade_pnl >= 0 else "🔄"
+
+    cascade_line = ""
+    if cascade_count > 0:
+        cascade_line = (
+            f"{cascade_icon} <b>CASCADE:</b> "
+            f"<code>{cascade_count}x ({cascade_sign}{cascade_pnl:.4f} USDT)</code>\n"
+        )
+
     msg = (
         f"📊 <b>GENIUS-DCA-BOT PERFORMANCE</b>\n\n"
         f"✅ <b>Closed trades:</b> <code>{int(stats.get('closed_trades', 0))}</code>\n"
         f"🏆 <b>Wins:</b> <code>{int(stats.get('wins', 0))}</code>\n"
         f"❌ <b>Losses:</b> <code>{int(stats.get('losses', 0))}</code>\n"
+        f"{cascade_line}"
         f"🔥 <b>Winrate:</b> <code>{float(stats.get('winrate_pct', 0.0)):.2f}%</code>\n"
         f"💵 <b>Total PnL:</b> <code>{float(stats.get('pnl_quote_sum', 0.0)):.4f} USDT</code>\n"
         f"💹 <b>ROI:</b> <code>{float(stats.get('roi_pct', 0.0)):.2f}%</code>\n"
@@ -504,23 +517,19 @@ def notify_cascade_exchange(
     drop_pct: float,
     new_tp: float,
 ) -> None:
-    """CASCADE Rolling Exchange — sell + buy + PnL."""
+    """CASCADE Rolling Exchange — გამარტივებული avg."""
     recovery_needed = ((new_tp / new_avg) - 1.0) * 100.0 if new_avg > 0 else 0.0
-    pnl_icon = "✅" if pnl_quote >= 0 else "📉"
-    pnl_sign = "+" if pnl_quote >= 0 else ""
-
+    pnl_icon = "🟢" if pnl_quote >= 0 else "🔴"
     msg = (
         f"🔄 <b>CASCADE EXCHANGE</b>\n\n"
-        f"🪙 <b>Symbol:</b> <code>{_escape_html(symbol)}</code>\n\n"
-        f"📤 <b>გაიყიდა:</b> <code>{_escape_html(old_layer)}</code>\n"
-        f"   ├ Avg entry: <code>{_fmt_price(old_avg)}</code>\n"
-        f"   ├ Sell price: <code>{_fmt_price(sell_price)}</code>\n"
-        f"   └ {pnl_icon} PnL: <code>{pnl_sign}{_fmt_usdt(pnl_quote)}</code>\n\n"
-        f"📥 <b>გაიხსნა:</b> <code>{_escape_html(new_layer)}</code>\n"
-        f"   ├ Entry: <code>{_fmt_price(new_avg)}</code>\n"
-        f"   └ 🎯 TP: <code>{_fmt_price(new_tp)}</code> <i>(+{recovery_needed:.2f}%)</i>\n\n"
-        f"📊 Drop trigger: <code>{drop_pct:.2f}%</code>\n"
-        f"🕒 <code>{_now_str()}</code>"
+        f"🪙 <b>Symbol:</b> <code>{_escape_html(symbol)}</code>\n"
+        f"📤 <b>გაიყიდა:</b> <code>{_escape_html(old_layer)}</code> avg=<code>{_fmt_price(old_avg)}</code>\n"
+        f"📥 <b>გაიხსნა:</b> <code>{_escape_html(new_layer)}</code> avg=<code>{_fmt_price(new_avg)}</code>\n"
+        f"📉 <b>Avg ჩამოვიდა:</b> <code>{_fmt_price(old_avg)} → {_fmt_price(new_avg)}</code>\n"
+        f"{pnl_icon} <b>Exchange PnL:</b> <code>{_fmt_usdt(pnl_quote)}</code>\n"
+        f"📊 <b>Drop trigger:</b> <code>{drop_pct:.2f}%</code>\n"
+        f"🎯 <b>TP:</b> <code>{_fmt_price(new_tp)}</code> (+{recovery_needed:.2f}%)\n"
+        f"🕒 <b>Time:</b> <code>{_now_str()}</code>"
     )
     send_telegram_message(msg)
 
