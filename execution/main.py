@@ -1323,35 +1323,6 @@ def main():
         f"mode={futures_engine.mode} lev={futures_engine.leverage}x"
     )
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # FUTURES FAST LOOP — daemon thread, FUTURES_LOOP_SLEEP=20s
-    # signal loop (120s) და futures SL/TP loop (20s) დამოუკიდებელია.
-    # fast thread: check_tp_sl + check_and_addon_short + check_addon_sl
-    # main loop:   check_and_open_short + close_all_shorts (regime-based)
-    # thread-safety: SQLite WAL + status='OPEN' filter → no race condition
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    import threading as _fut_thread
-
-    _futures_loop_sleep = int(os.getenv("FUTURES_LOOP_SLEEP", "20"))
-
-    def _run_futures_fast_loop():
-        while True:
-            try:
-                if futures_engine.enabled:
-                    futures_engine.check_tp_sl()
-                    futures_engine.check_and_addon_short()
-                    futures_engine.check_addon_sl()
-            except Exception as _ffe:
-                logger.warning(f"FUTURES_FAST_LOOP_ERR | err={_ffe}")
-            time.sleep(_futures_loop_sleep)
-
-    _fut_thread.Thread(
-        target=_run_futures_fast_loop,
-        daemon=True,
-        name="futures_fast_loop"
-    ).start()
-    logger.info(f"FUTURES_FAST_LOOP | started interval={_futures_loop_sleep}s")
-
     logger.info(f"GENIUS BOT MAN worker starting | MODE={mode}")
     logger.info(f"OUTBOX_PATH={outbox_path}")
     logger.info(f"LOOP_SLEEP_SECONDS={sleep_s}")
@@ -1475,13 +1446,12 @@ def main():
                 _market_regime = _detect_market_regime_24h()
 
                 if _market_regime == "BEAR":
-                    # BEAR → SHORT open (regime-based, main loop)
-                    # TP/SL/ADD-ON → fast thread (FUTURES_LOOP_SLEEP=20s)
                     futures_engine.check_and_open_short(_market_regime)
+                    futures_engine.check_tp_sl()
                 elif _market_regime == "BULL":
-                    # BULL → ყველა SHORT დახურვა (regime-based, main loop)
                     futures_engine.close_all_shorts(reason="BULL_MARKET")
-                # NEUTRAL: fast thread მართავს check_tp_sl/addon_sl
+                else:
+                    futures_engine.check_tp_sl()
 
             except Exception as _fe:
                 logger.warning(f"FUTURES_LOOP_WARN | err={_fe}")
@@ -1714,15 +1684,41 @@ def main():
                           engine.execute_signal(sig)
 
                           # ── DEMO: DCA position გახსნა ──────────────────
+                          # FIX: EXEC_REJECT check — თუ engine-მა reject-ი გააკეთა
+                          # (ABOVE_MIN_OPEN_TRADES, MAX_OPEN_TRADES, და სხვა),
+                          # mark_signal_id_executed() უკვე გამოიძახა → skip DEMO open.
+                          # signal_id_already_executed() → True = rejected ან executed
                           if engine.exchange is None and _dca_enabled:
                               try:
                                   from execution.db.repository import (
                                       open_dca_position, add_dca_order, open_trade,
-                                      get_open_dca_position_for_symbol
+                                      get_open_dca_position_for_symbol,
+                                      signal_id_already_executed,
+                                      get_all_open_trades,
                                   )
                                   _sym = str((sig.get("execution") or {}).get("symbol", "BTC/USDT"))
+
+                                  # REJECT CHECK 1: engine-ის reject — signal marked executed
+                                  if signal_id_already_executed(signal_id):
+                                      logger.info(
+                                          f"[DEMO] SKIP_REJECTED | {_sym} "
+                                          f"engine rejected signal id={signal_id}"
+                                      )
+                                  # REJECT CHECK 2: MAX_OPEN_TRADES guard (mirrors engine logic)
+                                  elif len(get_all_open_trades() or []) >= int(os.getenv("MAX_OPEN_TRADES", "5")):
+                                      logger.info(
+                                          f"[DEMO] SKIP_MAX_OPEN | {_sym} "
+                                          f"total_open >= MAX_OPEN_TRADES={os.getenv('MAX_OPEN_TRADES', '5')}"
+                                      )
+                                  else:
+                                      pass  # fall through to _existing check
+
                                   _existing = get_open_dca_position_for_symbol(_sym)
-                                  if not _existing:
+                                  _rejected = (
+                                      signal_id_already_executed(signal_id)
+                                      or len(get_all_open_trades() or []) > int(os.getenv("MAX_OPEN_TRADES", "5"))
+                                  )
+                                  if not _existing and not _rejected:
                                       _quote = float(os.getenv("BOT_QUOTE_PER_TRADE", "12.0"))
                                       _price = _price_cache.get(_sym, 0.0)
                                       if _price <= 0:
