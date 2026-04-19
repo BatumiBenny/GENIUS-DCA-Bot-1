@@ -1693,30 +1693,45 @@ def main():
                                   from execution.db.repository import (
                                       open_dca_position, add_dca_order, open_trade,
                                       get_open_dca_position_for_symbol,
-                                      signal_id_already_executed,
+                                      get_executed_signal_action,
                                       get_all_open_trades,
                                   )
                                   _sym = str((sig.get("execution") or {}).get("symbol", "BTC/USDT"))
 
-                                  # REJECT CHECK 1: engine-ის reject — signal marked executed
-                                  if signal_id_already_executed(signal_id):
+                                  # ── REJECT CHECK ──────────────────────────────────────────
+                                  # FIX: signal_id_already_executed() → True for BOTH:
+                                  #   "TRADE_DEMO"  (ნორმალური შესრულება) — DCA MUST open
+                                  #   "REJECT_*"    (ნამდვილი reject)     — DCA must NOT open
+                                  # გამოსწორება: action სტრიქონით ვანსხვავებთ.
+                                  # TRADE_DEMO engine-ში simulate_market_entry() = no-op,
+                                  # ამიტომ DCA position-ი main.py-ში იხსნება.
+                                  _exec_action = get_executed_signal_action(signal_id)
+                                  _REAL_REJECTS = {
+                                      "REJECT_MAX_OPEN_TRADES",
+                                      "REJECT_ABOVE_MIN_OPEN",
+                                      "REJECT_MAX_POSITIONS",
+                                      "REJECT_ACTIVE_OCO",
+                                      "REJECT_OPEN_TRADE_RACE",
+                                      "REJECT_MIN_NOTIONAL",
+                                      "REJECT_PORTFOLIO_EXPOSURE",
+                                  }
+                                  _is_real_reject = _exec_action in _REAL_REJECTS
+
+                                  if _is_real_reject:
                                       logger.info(
                                           f"[DEMO] SKIP_REJECTED | {_sym} "
-                                          f"engine rejected signal id={signal_id}"
+                                          f"action={_exec_action} id={signal_id}"
                                       )
-                                  # REJECT CHECK 2: MAX_OPEN_TRADES guard (mirrors engine logic)
                                   elif len(get_all_open_trades() or []) >= int(os.getenv("MAX_OPEN_TRADES", "5")):
                                       logger.info(
                                           f"[DEMO] SKIP_MAX_OPEN | {_sym} "
                                           f"total_open >= MAX_OPEN_TRADES={os.getenv('MAX_OPEN_TRADES', '5')}"
                                       )
-                                  else:
-                                      pass  # fall through to _existing check
 
                                   _existing = get_open_dca_position_for_symbol(_sym)
                                   _rejected = (
-                                      signal_id_already_executed(signal_id)
-                                      or len(get_all_open_trades() or []) > int(os.getenv("MAX_OPEN_TRADES", "5"))
+                                      _is_real_reject
+                                      or len(get_all_open_trades() or []) >= int(os.getenv("MAX_OPEN_TRADES", "5"))
                                   )
                                   if not _existing and not _rejected:
                                       _quote = float(os.getenv("BOT_QUOTE_PER_TRADE", "12.0"))
