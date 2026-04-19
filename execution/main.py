@@ -1794,7 +1794,11 @@ def main():
                 # 08:00-02:00 → ყოველ 30 წუთს
                 _hb_day_ok = not _hb_silent and (now - last_heartbeat_ts) >= 1800
 
-                if not _hb_silent and (_hb_night_ok or _hb_day_ok):
+                # 23:57-23:59 → heartbeat დაუყოვნებლივ Daily Summary-სთან ერთად
+                # LOOP_SLEEP=120s > 60s window → მოვაფართოვოთ 3 წუთამდე
+                _hb_midnight_ok = (_hb_hour == 23 and _hb_minute >= 57)
+
+                if not _hb_silent and (_hb_night_ok or _hb_day_ok or _hb_midnight_ok):
                     from execution.db.repository import get_all_open_dca_positions, get_trade_stats
                     from execution.telegram_notifier import notify_heartbeat
                     import resource as _res
@@ -1821,9 +1825,12 @@ def main():
                 now_local = _now_dt()
                 today_str = now_local.date().isoformat()
 
+                # FIX: LOOP_SLEEP=120s > 23:59 window=60s → 50% miss rate!
+                # გაფართოება: 57,58,59 → 180s window > 120s loop → 100% guaranteed
+                # last_daily_summary_date guard → double-send შეუძლებელია
                 if (
                     now_local.hour == 23
-                    and now_local.minute == 59
+                    and now_local.minute in (57, 58, 59)
                     and last_daily_summary_date != today_str
                 ):
                     closed_trades = get_closed_trades()
