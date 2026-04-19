@@ -592,14 +592,19 @@ def notify_heartbeat(
             # 🟡 ← TP-მდე 0.3-1% (შუაში)
             # 🔵 ← TP-მდე < 0.3% (ახლოს!)
             # 🟢 ← TP hit (current >= tp)
+            # ── TP distance indicator ──────────────────────────────
+            # 🟢 მწვანე  → TP-თან ახლოს  (< 0.5% to TP)
+            # 🟡 ყვითელი → საშუალო       (0.5% – 1.5% to TP)
+            # 🔴 წითელი  → შორს TP-დან   (> 1.5% to TP)
+            # ──────────────────────────────────────────────────────
             if current >= tp:
-                indicator = "🟢"
-            elif tp_dist_pct < 0.3:
-                indicator = "🔵"
-            elif tp_dist_pct < 1.0:
-                indicator = "🟡"
+                indicator = "🟢"  # TP hit!
+            elif tp_dist_pct < 0.5:
+                indicator = "🟢"  # ახლოს — < 0.5%
+            elif tp_dist_pct < 1.5:
+                indicator = "🟡"  # საშუალო — 0.5–1.5%
             else:
-                indicator = "🔴"
+                indicator = "🔴"  # შორს — > 1.5%
 
             msg += (
                 f"{indicator} <code>{_escape_html(sym)}</code> "
