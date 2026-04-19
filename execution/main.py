@@ -1776,29 +1776,26 @@ def main():
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # E: HEARTBEAT — Smart Schedule (Asia/Tbilisi):
-            # 08:00-02:00 → ყოველ 30 წუთს
-            # 02:00-02:30 → ერთხელ ღამით (Daily Summary-ის შემდეგ)
-            # 02:30-08:00 → გაჩუმება 😴
+            # 09:00-03:00 → ყოველ 1 საათში (3600s)
+            # 03:00-09:00 → გაჩუმება 😴 (ძილის საათები)
+            # 23:57-23:59 → Daily Summary-სთან ერთად (always)
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             try:
                 _hb_now    = _now_dt()
                 _hb_hour   = _hb_now.hour
                 _hb_minute = _hb_now.minute
 
-                # 02:30-08:00 → გაჩუმება
-                _hb_silent = (2 < _hb_hour < 8) or (_hb_hour == 2 and _hb_minute >= 30)
+                # 03:00-09:00 → გაჩუმება (ძილი)
+                # 03:00 ≤ hour < 09:00 → silent
+                _hb_silent = (3 <= _hb_hour < 9)
 
-                # 02:00-02:30 → ერთხელ ღამით
-                _hb_night_ok = (_hb_hour == 2 and 0 <= _hb_minute <= 30)
+                # 09:00-03:00 → ყოველ 1 საათში
+                _hb_day_ok = not _hb_silent and (now - last_heartbeat_ts) >= 3600
 
-                # 08:00-02:00 → ყოველ 30 წუთს
-                _hb_day_ok = not _hb_silent and (now - last_heartbeat_ts) >= 1800
-
-                # 23:57-23:59 → heartbeat დაუყოვნებლივ Daily Summary-სთან ერთად
-                # LOOP_SLEEP=120s > 60s window → მოვაფართოვოთ 3 წუთამდე
+                # 23:57-23:59 → Daily Summary-სთან ერთად (loop window fix)
                 _hb_midnight_ok = (_hb_hour == 23 and _hb_minute >= 57)
 
-                if not _hb_silent and (_hb_night_ok or _hb_day_ok or _hb_midnight_ok):
+                if _hb_day_ok or _hb_midnight_ok:
                     from execution.db.repository import get_all_open_dca_positions, get_trade_stats
                     from execution.telegram_notifier import notify_heartbeat
                     import resource as _res
